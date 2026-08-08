@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tree World</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <button id="restartButton" type="button" hidden>重新开始</button>
+  <!-- 数值拆分输入框由 interaction.js 在点击节点右下角输入区时定位并显示。 -->
+  <input id="splitInput" type="number" min="1" step="1" inputmode="decimal" hidden aria-label="拆分数量">
+
+  <div id="tip">
+    左键：选中 / 展开　拖动：移动节点　滚轮：缩放　中键：移动地图<br>
+    点击身体展开手；点击手后采集末端节点；右键让手归位
+  </div>
+  <div id="status">先点击树节点展开，直到出现花、种子或原木。</div>
+
+  <!-- 普通脚本按依赖顺序加载，兼容直接打开 file:// 本地文件的场景。 -->
+  <script src="js/config.js"></script>
+  <script src="js/node.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/interaction.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
