@@ -15,7 +15,7 @@ class Renderer {
   }
 
   /** 绘制普通节点；采集颤动仅作用于这个节点自身的视觉内容。 */
-  drawNode(node, hovered, handActive, now, scale = 1) {
+  drawNode(node, hovered, handActive, now, scale = 1, activeBlue = null, allowMultipleBlue = false) {
     const { ctx } = this;
     ctx.save();
     // 手、嘴等指定 UI 工具围绕自身中心缩放，位置仍保持在屏幕坐标系中。
@@ -26,7 +26,9 @@ class Renderer {
     }
     if (node.shakeUntil > now) ctx.translate(Math.sin(now * .045) * 4, Math.cos(now * .0765) * 3);
     ctx.globalAlpha = node.type === "手" && handActive ? .45 : .78;
-    ctx.fillStyle = node.selected ? "#1976d2" : "#222";
+    // 常规状态只让一个焦点节点变蓝；框选作为特殊状态，允许多节点同时显示蓝色。
+    const blue = activeBlue ? node === activeBlue : (allowMultipleBlue ? node.selected : node.selected);
+    ctx.fillStyle = blue ? "#1976d2" : "#222";
     ctx.fillRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
     ctx.strokeStyle = "#aaa";
     ctx.strokeRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
@@ -209,8 +211,12 @@ class Renderer {
     ctx.fillText("点击“重新开始”创建一局新的游戏", canvas.width / 2, canvas.height / 2 + 28);
   }
 
-  draw(camera, hovered, handActive, now, selectionBox) {
+  draw(camera, hovered, handActive, now, selectionBox, activeBlue = null) {
     const { ctx, canvas, world } = this;
+    const selectedWorldCount = world.nodes.filter(node => node.selected).length;
+    const selectedUICount = world.uiNodes.filter(node => node.selected).length;
+    // 框选结束后保留的多选也视为框选特殊状态，直到玩家进行新的单节点操作。
+    const allowMultipleBlue = !activeBlue && (Boolean(selectionBox) || selectedWorldCount + selectedUICount > 1);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.translate(camera.x, camera.y);
@@ -221,7 +227,7 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
     });
-    world.nodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now));
+    world.nodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
     ctx.restore();
 
     const hand = world.uiNodes.find(node => node.type === "手");
@@ -236,7 +242,7 @@ class Renderer {
     }
     this.drawBackpackLinks();
     this.drawResourceLinks();
-    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1));
+    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
     this.drawSelectionBox(selectionBox);
     this.drawGameOver();
   }

@@ -341,6 +341,9 @@ class Interaction {
       const node = this.world.nodes.find(item => item.visible && !item.locked && this.hit(item, point));
       if (!node) {
         // 空白处按住左键进入框选模式，选框使用屏幕坐标以便直接绘制。
+        // 没有节点黏附时，空白左键同时取消世界和 UI 的全部旧选择。
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
         this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
         return;
       }

@@ -50,7 +50,11 @@ window.addEventListener("resize", () => {
 function frame(now) {
   world.tick(now);
   restartButton.hidden = !world.gameOver;
-  renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox);
+  // 黏附到鼠标的节点优先成为唯一蓝色焦点；没有黏附节点时由普通选中状态决定。
+  const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem
+    || (interaction.handActive && world.uiNodes.find(node => node.type === "手"))
+    || (interaction.mouthActive && world.uiNodes.find(node => node.type === "嘴"));
+  renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox, attachedNode);
   requestAnimationFrame(frame);
 }
 
