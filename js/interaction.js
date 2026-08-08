@@ -349,6 +349,10 @@ class Interaction {
       }
       // 终端节点使用拾取式拖动：第一次左键黏附到光标，不进入选中状态。
       if (this.world.isHarvestable(node)) {
+        // 终端节点进入黏附状态时也成为当前选中节点，供蓝色焦点和详情页使用。
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
+        node.selected = true;
         this.carriedTerminal = node;
         this.carriedTerminalOrigin = { x: node.x, y: node.y };
         this.skipClickAfterDrag = true;

@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { AudioManager, Interaction, Renderer, UI, World } = window.TreeWorld;
+const { AudioManager, DetailPanel, Interaction, Renderer, UI, World } = window.TreeWorld;
 
 const canvas = document.getElementById("canvas");
 
@@ -23,6 +23,7 @@ audio.startBackground();
 canvas.addEventListener("pointerdown", () => audio.startBackground(), { once: true });
 const interaction = new Interaction(canvas, world, ui, audio);
 const renderer = new Renderer(canvas, world, ui);
+const detailPanel = new DetailPanel();
 const restartButton = document.getElementById("restartButton");
 
 // 固定的刷新节点：回退最深的一层展开，并将可拖动 UI 放回初始化位置。
@@ -55,6 +56,9 @@ function frame(now) {
     || (interaction.handActive && world.uiNodes.find(node => node.type === "手"))
     || (interaction.mouthActive && world.uiNodes.find(node => node.type === "嘴"));
   renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox, attachedNode);
+  // 多选时取最后一个节点作为详情焦点；没有选中节点时由详情页自行保留最近一次信息。
+  const selectedNode = [...world.nodes, ...world.uiNodes].filter(node => node.selected).at(-1) || attachedNode || null;
+  detailPanel.update(selectedNode);
   requestAnimationFrame(frame);
 }
 

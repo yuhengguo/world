@@ -48,6 +48,36 @@
     专注: { emoji: "🎯", children: [], sound: "focus.wav", volume: .55 }
   };
 
+  // 面向玩家的节点说明。新增节点时在这里补一条，即可显示在右侧详情页。
+  const NODE_DESCRIPTIONS = {
+    树: "一棵能不断展开的树。把它的枝叶清理干净，脚下的秘密才会慢慢露出来。",
+    树枝: "树向外伸出的枝条，花和种子往往藏在这里。",
+    树干: "结实的树干，继续展开可以找到可收集的原木。",
+    原木: "沉甸甸的一截木头。需要多花几下功夫，才会进入你的背包。",
+    花: "一朵轻盈的花。可以采走，也可以在饿的时候吃掉它。",
+    种子: "小小的种子，能填一点肚子；不过有时它也会让你不太舒服。",
+    土: "脚下的一层土。挖开它，下面也许有矿，也许有更深的路。",
+    土块: "一块刚挖出的泥土。它不值钱，但每一层秘密都从这里开始。",
+    铁矿: "埋在土里的铁矿。打开它，收集属于你的铁块。",
+    铁块: "可以带走的铁块。硬一点，也更磨你的手。",
+    铜矿: "泛着暖色的铜矿，耐心挖开它看看。",
+    铜块: "一块铜。比土更有分量，也更值得留在背包里。",
+    金矿: "闪闪发亮的金矿。它很难采，但看起来很值得。",
+    金块: "一块金。想拿走它，需要先付出一点耐心和手的磨损。",
+    钻石: "深层中的钻石矿。它在等愿意一直挖下去的人。",
+    钻石块: "一小块钻石。很难采，但这正是它珍贵的原因。",
+    基岩: "世界最深处的基岩。你可以碰到它，但不能带走它。",
+    身体: "这是你在节点世界里的身体。打开它，叫出手和嘴开始行动。",
+    手: "这是你勤劳的双手。用它采集东西，给自己弄点吃的；别忘了它也会磨损。",
+    嘴: "这是你的嘴。把背包里的花或种子送到这里，给自己补充一点饥饿。",
+    背包: "这是你的背包。采到的东西都会放在这里，也可以按数量拆出来摆放。",
+    思考: "一盏亮起来的小灯。它提醒你：这个世界还可以被继续想象。",
+    刷新: "想重新整理眼前的结构时，就按一下这里。",
+    饥饿: "你的肚子正在计数。采集会消耗它，吃东西可以补回来。",
+    生命: "这是你还能继续探索的余量。饥饿耗尽后，生命会替你付账。",
+    专注: "你的专注储备。先留在这里，未来它会成为更复杂行动的燃料。"
+  };
+
   /* 以下派生数据由类型表自动生成，其他模块无需维护第二份节点信息。 */
   const emoji = Object.fromEntries(Object.entries(NODE_TYPES).map(([type, data]) => [type, data.emoji]));
   const rules = Object.fromEntries(Object.entries(NODE_TYPES).map(([type, data]) => [type, data.children || []]));
@@ -73,7 +103,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, BACKGROUND_MUSIC, NODE_TYPES, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();
