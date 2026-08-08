@@ -307,6 +307,8 @@ class World {
       item.detached = false;
       item.backpackItemOwner = this.backpack;
       item.isNumericPile = true;
+      // 背包展开物品的大小跟随世界缩放，位置仍保留在屏幕 UI 层。
+      item.scalesWithWorld = true;
       this.backpack.children.push(item);
       this.uiNodes.push(item);
     });
@@ -325,6 +327,7 @@ class World {
     detached.sourcePile = item;
     detached.backpackItemOwner = this.backpack;
     detached.isNumericPile = true;
+    detached.scalesWithWorld = true;
     this.backpack.children.push(detached);
     this.uiNodes.push(detached);
     return detached;
@@ -398,6 +401,8 @@ class World {
         const position = this.toolHomePosition(type, index);
         // 手和嘴在身体上方展开，横向留出空隙，避免与身体及底栏资源重叠。
         const tool = new Node(type, position.x, position.y, true);
+        // 工具位置属于屏幕 UI，但图标和卡片尺寸跟随世界缩放，形成与世界的视觉关联。
+        tool.scalesWithWorld = true;
         this.body.children.push(tool);
         this.uiNodes.push(tool);
       });
@@ -434,14 +439,17 @@ class World {
   }
 
   /** 吃掉背包中的一件食物（可以直接吃原数值节点，也可以吃拆出的节点）。 */
-  eatBackpackItem(item) {
+  eatBackpackItem(item, now) {
     if (!item?.edible || !item.backpackItemOwner || item.quantity <= 0) return { eaten: false };
+    // 进食反馈：直接吃原节点时震动它；吃拆分节点时来源节点也同步震动。
+    item.shakeUntil = now + 180;
+    if (item.detached && item.sourcePile) item.sourcePile.shakeUntil = now + 180;
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
     item.quantity -= 1;
     if (item.quantity <= 0) {
       if (item.detached && item.sourcePile) item.sourcePile.splitAmount = Math.min(item.sourcePile.splitAmount || 1, Math.max(1, item.sourcePile.quantity - 1));
-      this.backpack.children = this.backpack.children.filter(node => node !== item);
-      this.uiNodes = this.uiNodes.filter(node => node !== item);
+      // 保留最后一件到震动结束，确保被吃掉的独立节点也能显示视觉反馈。
+      item.consumedUntil = now + 180;
     }
     this.resources.饥饿 = Math.min(RESOURCE_CONFIG.饥饿.max, this.resources.饥饿 + item.hungerRestore);
     if (item.poisoned) this.resources.生命 = Math.max(0, this.resources.生命 - item.poisonDamage);
@@ -465,6 +473,11 @@ class World {
       if (!tool.lost && tool.durability !== null && recovery > 0) {
         tool.durability = Math.min(100, tool.durability + seconds * recovery);
       }
+    });
+    // 吃完但仍在震动的背包节点在效果结束后才从画面和背包临时列表中移除。
+    this.backpack.children.filter(item => item.consumedUntil && now >= item.consumedUntil).forEach(item => {
+      this.backpack.children = this.backpack.children.filter(node => node !== item);
+      this.uiNodes = this.uiNodes.filter(node => node !== item);
     });
   }
 }

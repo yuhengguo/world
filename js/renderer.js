@@ -15,9 +15,15 @@ class Renderer {
   }
 
   /** 绘制普通节点；采集颤动仅作用于这个节点自身的视觉内容。 */
-  drawNode(node, hovered, handActive, now) {
+  drawNode(node, hovered, handActive, now, scale = 1) {
     const { ctx } = this;
     ctx.save();
+    // 手、嘴等指定 UI 工具围绕自身中心缩放，位置仍保持在屏幕坐标系中。
+    if (scale !== 1) {
+      ctx.translate(node.x, node.y);
+      ctx.scale(scale, scale);
+      ctx.translate(-node.x, -node.y);
+    }
     if (node.shakeUntil > now) ctx.translate(Math.sin(now * .045) * 4, Math.cos(now * .0765) * 3);
     ctx.globalAlpha = node.type === "手" && handActive ? .45 : .78;
     ctx.fillStyle = node.selected ? "#1976d2" : "#222";
@@ -45,19 +51,17 @@ class Renderer {
       ctx.textBaseline = "alphabetic";
       const quantity = Number.isInteger(node.quantity) ? node.quantity : node.quantity.toFixed(1);
       ctx.fillText(`×${quantity}`, node.x - 44, node.y + 24);
-      // 原节点底部同时提供滑条和数值输入框；资源以 0.1、背包以 1 为最小拆分单位。
+      // 原节点右下角只保留直接输入数量的框；滑条已取消。
       const minimum = 1;
       if (!node.detached && node.quantity > minimum) {
-        const maximum = Math.max(minimum, node.quantity - minimum);
-        const ratio = ((node.splitAmount || minimum) - minimum) / Math.max(minimum, maximum - minimum);
-        ctx.fillStyle = "#555";
-        ctx.fillRect(node.x + 10, node.y + 17, 33, 6);
-        ctx.fillStyle = "#8bd3ff";
-        ctx.fillRect(node.x + 10, node.y + 17, 33 * ratio, 6);
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(node.x + 9 + 33 * ratio, node.y + 15, 3, 10);
         ctx.strokeStyle = "#8bd3ff";
-        ctx.strokeRect(node.x - 46, node.y + 14, 48, 16);
+        ctx.strokeRect(node.x + 1, node.y + 14, 47, 16);
+        // 输入框关闭后仍显示最近确认的分离数量，让玩家知道下一次会拆出多少。
+        ctx.fillStyle = "#dff4ff";
+        ctx.font = "11px Microsoft YaHei";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(node.splitAmount || minimum), node.x + 24, node.y + 22);
       }
     }
     // 手、嘴的底部耐久条独立于采集进度条；归零后该节点会被隐藏。
@@ -232,7 +236,7 @@ class Renderer {
     }
     this.drawBackpackLinks();
     this.drawResourceLinks();
-    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now));
+    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1));
     this.drawSelectionBox(selectionBox);
     this.drawGameOver();
   }

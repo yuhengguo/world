@@ -18,6 +18,9 @@ resize();
 const world = new World(canvas.width, canvas.height);
 const ui = new UI();
 const audio = new AudioManager();
+audio.startBackground();
+// 某些浏览器要求用户手势才能播放声音；首次点击会自动补启背景音乐。
+canvas.addEventListener("pointerdown", () => audio.startBackground(), { once: true });
 const interaction = new Interaction(canvas, world, ui, audio);
 const renderer = new Renderer(canvas, world, ui);
 const restartButton = document.getElementById("restartButton");
