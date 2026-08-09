@@ -4,9 +4,7 @@
  */
 
 (() => {
-const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node } = window.TreeWorld;
-
-const random = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, random, resetRandomSequences } = window.TreeWorld;
 
 /** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
 const spawnCountRange = definition => {
@@ -20,9 +18,23 @@ const spawnCountRange = definition => {
   return [count, count];
 };
 
+/** 读取普通子节点的生成数量范围；未配置时保持原有的 3 到 6 个默认值。 */
+const childCountRange = definition => {
+  const configured = definition?.childCount;
+  if (Array.isArray(configured)) {
+    const min = Math.max(0, Math.floor(configured[0] || 0));
+    const max = Math.max(min, Math.floor(configured[1] ?? min));
+    return [min, max];
+  }
+  const count = Math.max(0, Math.floor(configured ?? 3));
+  return configured === undefined ? [3, 6] : [count, count];
+};
+
 class World {
   /** 创建树、身体、背包及其初始状态。 */
   constructor(width, height) {
+    // 新世界从 config.js 的同一随机种子重新起算，便于完全复现世界生成。
+    resetRandomSequences();
     this.nodes = [];
     this.edges = [];
     this.uiNodes = [];
@@ -31,9 +43,8 @@ class World {
     this.gameOver = false;
     this.lastTick = 0;
 
-    this.root = new Node("树", width / 2, 120);
-    this.root.soilLayerCount = random(3, 6);
-    this.createHiddenSoilChain(this.root, this.root.soilLayerCount);
+    // 山是不可被清空的世界根；森林、草地和岩壁等区域都会挂在它下面。
+    this.root = new Node("山", width / 2, height / 2);
     this.nodes.push(this.root);
 
     // UI 使用屏幕坐标：初始化在左侧中部，永远不受世界相机缩放影响。
@@ -66,7 +77,7 @@ class World {
       // 每条隐藏链的终点固定为配置中唯一的不可破坏节点。
       const type = index === count - 1
         ? FINAL_HIDDEN_LAYER_TYPE
-        : HIDDEN_LAYER_TYPES[Math.floor(Math.random() * HIDDEN_LAYER_TYPES.length)];
+        : random.pick(HIDDEN_LAYER_TYPES);
       const layer = new Node(type, owner.x, owner.y - (index + 1) * gap);
       layer.visible = false;
       layer.hiddenUnderlay = true;
@@ -76,7 +87,10 @@ class World {
     }
   }
 
-  /** 仅揭示所属节点的下一层，不会一次把所有隐藏层放进世界。 */
+  /**
+   * 仅揭示所属节点的下一层，不会一次把所有隐藏层放进世界。
+   * 被揭示的地下层会提升为原节点父级的子节点：原树消失后它仍能留在森林中，并拥有清晰的连接线。
+   */
   revealNextUnderlay(node) {
     const next = node.underlays[0];
     if (!next) return null;
@@ -84,6 +98,12 @@ class World {
     next.hiddenUnderlay = false;
     next.locked = false;
     if (!this.nodes.includes(next)) this.nodes.push(next);
+    // 地下层不再依赖即将消失的树，而是提升到树所属的森林（或当前节点的直接父级）中。
+    const parent = this.edges.find(edge => edge.to === node)?.from || this.root;
+    if (!parent.children.includes(next)) parent.children.push(next);
+    if (!this.edges.some(edge => edge.from === parent && edge.to === next)) {
+      this.edges.push({ from: parent, to: next });
+    }
     return next;
   }
 
@@ -113,14 +133,29 @@ class World {
   findPosition(parent) {
     for (let radius = 150; radius < 700; radius += 80) {
       for (let i = 0; i < 50; i++) {
-        const angle = Math.random() * Math.PI * 2;
+        const angle = random.next() * Math.PI * 2;
         const x = parent.x + Math.cos(angle) * radius;
         const y = parent.y + Math.sin(angle) * radius;
-        const occupied = this.nodes.some(n => n.visible && Math.abs(n.x - x) < NODE_SIZE.width && Math.abs(n.y - y) < NODE_SIZE.height);
+        // 动态生物不会改变静态节点的生成位置，否则鸟在不同时间飞到哪里会间接扰乱同一种子的世界布局。
+        const occupied = this.nodes.some(n => !n.dynamic && n.visible && Math.abs(n.x - x) < NODE_SIZE.width && Math.abs(n.y - y) < NODE_SIZE.height);
         if (!occupied) return { x, y };
       }
     }
     return { x: parent.x + 200, y: parent.y + 150 };
+  }
+
+  /** 创建并接入一个世界子节点；树在这里获得各自独立的地下隐藏层。 */
+  createWorldChild(parent, type) {
+    const position = this.findPosition(parent);
+    const child = new Node(type, position.x, position.y);
+    if (type === "树") {
+      child.soilLayerCount = random.integer(3, 6);
+      this.createHiddenSoilChain(child, child.soilLayerCount);
+    }
+    parent.children.push(child);
+    this.nodes.push(child);
+    this.edges.push({ from: parent, to: child });
+    return child;
   }
 
   /** 展开普通世界节点；土也只会展开出一层终端土块。 */
@@ -131,11 +166,7 @@ class World {
         const [minimum] = spawnCountRange(NODE_TYPES[type]);
         const missing = Math.max(0, minimum - node.children.filter(child => child.type === type).length);
         for (let index = 0; index < missing; index++) {
-          const position = this.findPosition(node);
-          const child = new Node(type, position.x, position.y);
-          node.children.push(child);
-          this.nodes.push(child);
-          this.edges.push({ from: node, to: child });
+          this.createWorldChild(node, type);
         }
       });
       node.open = true;
@@ -146,26 +177,26 @@ class World {
     if (!available.length) return [];
 
     const created = [];
-    const count = random(3, 6);
+    const [minimumChildren, maximumChildren] = childCountRange(NODE_TYPES[node.type]);
+    const count = random.integer(minimumChildren, maximumChildren);
     // 概率子节点按“本次展开是否出现”判定；出现后按 spawnCount 生成多个同类型节点。
     const specialChildren = available.flatMap(type => {
       const definition = NODE_TYPES[type];
-      if (definition?.spawnChance === undefined || Math.random() >= definition.spawnChance) return [];
+      if (definition?.spawnChance === undefined || random.next() >= definition.spawnChance) return [];
       const [minimum, maximum] = spawnCountRange(definition);
-      return Array.from({ length: random(minimum, maximum) }, () => type);
+      return Array.from({ length: random.integer(minimum, maximum) }, () => type);
     });
     const regularChildren = available.filter(type => NODE_TYPES[type]?.spawnChance === undefined);
-    for (let i = 0; i < Math.max(count, specialChildren.length); i++) {
+    // 概率节点数量可能占满本轮名额（例如 3 只鸟与最小 3 个子节点）。
+    // 只要该父节点存在普通子节点，就至少保留一个，避免静态树只剩鸟后被规则立即清理并错误露出地下层。
+    const regularCount = Math.max(regularChildren.length ? 1 : 0, count - specialChildren.length);
+    const totalCount = specialChildren.length + regularCount;
+    for (let i = 0; i < totalCount; i++) {
       // 先生成本轮已掷中的特殊节点，其余名额由普通子节点填充。
       const type = i < specialChildren.length
         ? specialChildren[i]
-        : regularChildren[Math.floor(Math.random() * regularChildren.length)];
-      const position = this.findPosition(node);
-      const child = new Node(type, position.x, position.y);
-      node.children.push(child);
-      this.nodes.push(child);
-      this.edges.push({ from: node, to: child });
-      created.push(child);
+        : random.pick(regularChildren);
+      created.push(this.createWorldChild(node, type));
     }
     node.open = true;
     return created;
@@ -182,9 +213,12 @@ class World {
     });
   }
 
-  /** 收起节点时隐藏后代，但保留已生成的数据。 */
+  /** 收起节点时隐藏普通后代与其地下层，但保留已生成的数据供下次展开恢复。 */
   collapse(node) {
-    const hide = current => current.children.forEach(child => { child.visible = false; hide(child); });
+    const hide = current => {
+      current.children.forEach(child => { child.visible = false; hide(child); });
+      current.underlays.forEach(layer => { layer.visible = false; hide(layer); });
+    };
     hide(node);
     node.open = false;
   }
@@ -247,6 +281,25 @@ class World {
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
     return false;
+  }
+
+  /**
+   * 持续维护“静态父节点不能只挂动态子节点”的硬性规则。
+   * 这能覆盖复原、收起或旧状态恢复等未经过正常采集回调的路径，避免树下只剩鸟却不迁徙。
+   */
+  pruneDynamicOnlyStaticParents() {
+    const candidates = this.nodes.filter(parent => {
+      if (parent === this.root || parent.ui || parent.dynamic || !parent.children.length) return false;
+      const onlyDynamicChildren = parent.children.every(child => child.dynamic);
+      // 已展开或仍有可见动态子节点时立刻处理；完全收起的分支保留到再次展开时再检查。
+      return onlyDynamicChildren && (parent.open || parent.children.some(child => child.visible));
+    });
+    candidates.forEach(parent => {
+      // 前一个候选项可能已递归清理此节点，因此每次处理前重新确认它仍存在。
+      if (!this.nodes.includes(parent) || parent.children.some(child => !child.dynamic)) return;
+      parent.children.slice().filter(child => child.dynamic).forEach(child => this.migrateDynamicNode(child, parent));
+      if (this.nodes.includes(parent)) this.removeNodeAndEmptyParents(parent);
+    });
   }
 
   /** 创建固定在屏幕底部中央的三组数值资源节点；每组都可按数量拆出临时节点。 */
@@ -451,9 +504,10 @@ class World {
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);
-      // 动态子节点不阻止父节点消失：先迁徙它们，再按普通空节点规则递归清理父节点。
+      // 静态父节点不能只留下动态子节点独立存在：先迁徙动态节点，再清理这个静态父节点。
       const structuralChildren = parent.children.filter(child => !child.dynamic);
-      if (structuralChildren.length === 0 && parent.open) {
+      // 山作为世界根始终保留；动态父节点不套用此规则，避免错误清理未来的动态群落节点。
+      if (parent !== this.root && !parent.dynamic && structuralChildren.length === 0 && parent.open) {
         parent.children.filter(child => child.dynamic).forEach(child => this.migrateDynamicNode(child, parent));
         this.removeNodeAndEmptyParents(parent);
       }
@@ -545,6 +599,7 @@ class World {
 
   /** 饥饿满值时每秒缓慢恢复生命。 */
   tick(now) {
+    this.pruneDynamicOnlyStaticParents();
     if (!this.lastTick) this.lastTick = now;
     const seconds = (now - this.lastTick) / 1000;
     this.lastTick = now;

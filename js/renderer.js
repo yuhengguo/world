@@ -221,7 +221,8 @@ class Renderer {
     ctx.save();
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
-    world.nodes.forEach(node => this.drawHiddenChain(node));
+    // 仅为当前可见的节点绘制问号地下层；收起森林后，被隐藏的树不应继续露出其地下卡片。
+    world.nodes.forEach(node => node.visible && this.drawHiddenChain(node));
     world.edges.forEach(edge => {
       if (!edge.from.visible || !edge.to.visible) return;
       ctx.strokeStyle = "#777";

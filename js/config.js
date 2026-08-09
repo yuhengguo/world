@@ -9,13 +9,62 @@
 
   const NODE_SIZE = { width: 100, height: 60 };
   const ZOOM = { min: 0.4, max: 2.5, sensitivity: 0.0001 };
+  // 全局随机种子：修改这个整数后会生成一套新的世界；保持不变即可复刻同一套随机结果。
+  // 注意：要完全复刻鸟的飞行位置，也需要以相同节奏执行相同的操作。
+  const RANDOM_SEED = 202608101;
+
+  /** 可复位的伪随机数发生器；项目内所有随机结果必须从这里取得，不能直接调用 Math.random()。 */
+  class SeededRandom {
+    constructor(seed) {
+      this.reset(seed);
+    }
+
+    /** 用配置种子重置序列；页面重新开始时 config.js 会重新创建本实例。 */
+    reset(seed) {
+      this.seed = Number(seed) >>> 0;
+      this.state = this.seed;
+    }
+
+    /** 返回稳定的 [0, 1) 随机小数；采用 Mulberry32 算法。 */
+    next() {
+      this.state = (this.state + 0x6D2B79F5) >>> 0;
+      let value = this.state;
+      value = Math.imul(value ^ value >>> 15, value | 1);
+      value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+      return ((value ^ value >>> 14) >>> 0) / 4294967296;
+    }
+
+    /** 返回包含上下界的稳定随机整数。 */
+    integer(min, max) {
+      return Math.floor(this.next() * (max - min + 1)) + min;
+    }
+
+    /** 从数组中稳定地随机抽取一项。 */
+    pick(items) {
+      return items[this.integer(0, items.length - 1)];
+    }
+  }
+
+  const random = new SeededRandom(RANDOM_SEED);
+  // 动态节点使用由同一主种子派生出的独立序列，避免鸟的转向时机影响树、矿物等世界生成结果。
+  const dynamicRandom = new SeededRandom(RANDOM_SEED ^ 0x9E3779B9);
+
+  /** 新开一局时同步复位全部随机序列；种子只需要在本文件顶部修改一次。 */
+  const resetRandomSequences = () => {
+    random.reset(RANDOM_SEED);
+    dynamicRandom.reset(RANDOM_SEED ^ 0x9E3779B9);
+  };
   // 游戏启动后循环播放的背景音乐；volume 范围为 0 到 1。
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
   const NODE_TYPES = {
+    // childCount 控制一次展开时生成的普通子节点数量范围（含两端）。
+    山: { emoji: "⛰️", children: ["森林"], childCount: [1, 1], sound: "mountain.wav", volume: .75 },
+    // 森林生成多棵独立的树；每棵树都会带有自己的地下层、鸟与采集分支。
+    森林: { emoji: "🌳🌳", children: ["树"], childCount: [4, 6], sound: "forest.wav", volume: .7 },
     树: { emoji: "🌳", children: ["树枝", "树干", "鸟"], sound: "tree.wav", volume: .7 },
     树枝: { emoji: "🌿", children: ["花", "种子"], sound: "branch.wav", volume: .7 },
-    树干: { emoji: "🌲", children: ["原木"], sound: "trunk.wav", volume: .7 },
+    树干: { emoji: "🪵🪵", children: ["原木"], sound: "trunk.wav", volume: .7 },
     原木: { emoji: "🪵", children: [], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
     花: { emoji: "🌸", children: [], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
     种子: { emoji: "🌰", children: [], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
@@ -53,6 +102,8 @@
 
   // 面向玩家的节点说明。新增节点时在这里补一条，即可显示在右侧详情页。
   const NODE_DESCRIPTIONS = {
+    山: "整片世界的起点。展开山脉，找到能够继续探索的区域。",
+    森林: "山中的一片森林。展开后会出现多棵独立生长的树，每棵树下都藏着自己的土地。",
     树: "一棵能不断展开的树。把它的枝叶清理干净，脚下的秘密才会慢慢露出来。",
     树枝: "树向外伸出的枝条，花和种子往往藏在这里。",
     树干: "结实的树干，继续展开可以找到可收集的原木。",
@@ -107,7 +158,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, resetRandomSequences, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();

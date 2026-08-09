@@ -170,7 +170,8 @@ class Interaction {
     }
     if (!this.hovered) {
       const point = this.worldPosition(event);
-      this.hovered = this.world.nodes.find(node => node.visible && !node.locked && this.hit(node, point)) || null;
+      // 渲染时后创建的世界节点位于更上层；命中检测也必须倒序，保证鼠标操作的是看见的那一张卡片。
+      this.hovered = [...this.world.nodes].reverse().find(node => node.visible && !node.locked && this.hit(node, point)) || null;
     }
     if (!this.handActive) this.canvas.style.cursor = this.hovered ? "pointer" : "default";
   }
@@ -338,7 +339,7 @@ class Interaction {
       // 采集模式下禁止选中或拖动树，避免微小鼠标位移带动整个结构。
       if (this.handActive) return;
       const point = this.worldPosition(event);
-      const node = this.world.nodes.find(item => item.visible && !item.locked && this.hit(item, point));
+      const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
       if (!node) {
         // 空白处按住左键进入框选模式，选框使用屏幕坐标以便直接绘制。
         // 没有节点黏附时，空白左键同时取消世界和 UI 的全部旧选择。
@@ -473,7 +474,7 @@ class Interaction {
       const point = this.worldPosition(event);
       if (this.handActive) {
         if (this.world.gameOver) { this.ui.setStatus("游戏结束：请点击“重新开始”。"); return; }
-        const target = this.world.nodes.find(node => node.visible && (this.world.isHarvestable(node) || this.world.isIndestructible(node)) && this.hit(node, point));
+        const target = [...this.world.nodes].reverse().find(node => node.visible && (this.world.isHarvestable(node) || this.world.isIndestructible(node)) && this.hit(node, point));
         if (!target) return;
         if (this.world.touchIndestructible(target, performance.now())) {
           this.ui.setStatus(`触碰到${target.type}：它无法被采集。`);
@@ -501,7 +502,7 @@ class Interaction {
         }
         return;
       }
-      const node = this.world.nodes.find(item => item.visible && !item.locked && this.hit(item, point));
+      const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
       if (!node) return;
       if (this.world.touchIndestructible(node, performance.now())) {
         this.ui.setStatus(`触碰到${node.type}：它无法被采集。`);

@@ -40,11 +40,12 @@ class DynamicNodeController {
   /** 随机选一个飞行方向，并在配置规定的时长后重新转向。 */
   chooseDirection(node, now) {
     const [minInterval, maxInterval] = node.dynamic.turnInterval || [650, 1500];
-    const angle = Math.random() * Math.PI * 2;
+    const random = window.TreeWorld.dynamicRandom;
+    const angle = random.next() * Math.PI * 2;
     node.dynamicState = {
       vx: Math.cos(angle) * node.dynamic.speed,
       vy: Math.sin(angle) * node.dynamic.speed,
-      turnAt: now + minInterval + Math.random() * (maxInterval - minInterval),
+      turnAt: now + minInterval + random.next() * (maxInterval - minInterval),
       lastTick: now
     };
   }
