@@ -347,6 +347,14 @@ class Interaction {
         this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
         return;
       }
+      // 动态节点（鸟）只能被选中查看，不会黏附光标或被普通拖动；手采集仍由 click 阶段处理。
+      if (node.dynamic) {
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
+        node.selected = true;
+        this.skipClickAfterDrag = true;
+        return;
+      }
       // 终端节点使用拾取式拖动：第一次左键黏附到光标，不进入选中状态。
       if (this.world.isHarvestable(node)) {
         // 终端节点进入黏附状态时也成为当前选中节点，供蓝色焦点和详情页使用。

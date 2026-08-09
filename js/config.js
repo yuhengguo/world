@@ -13,12 +13,15 @@
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
   const NODE_TYPES = {
-    树: { emoji: "🌳", children: ["树枝", "树干"], sound: "tree.wav", volume: .7 },
+    树: { emoji: "🌳", children: ["树枝", "树干", "鸟"], sound: "tree.wav", volume: .7 },
     树枝: { emoji: "🌿", children: ["花", "种子"], sound: "branch.wav", volume: .7 },
     树干: { emoji: "🌲", children: ["原木"], sound: "trunk.wav", volume: .7 },
     原木: { emoji: "🪵", children: [], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
     花: { emoji: "🌸", children: [], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
     种子: { emoji: "🌰", children: [], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
+    // 动态节点示例：spawnChance 是每次展开树时出现鸟群的概率；spawnCount 是出现后鸟的随机数量范围（含两端）。
+    // 例如改成 spawnChance: .5, spawnCount: [1, 4]，表示有 50% 概率出现 1 到 4 只鸟。
+    鸟: { emoji: "🐦", children: [], spawnChance: 1, spawnCount: [1, 3], dynamic: { speed: 420, turnInterval: [650, 1500] }, harvestClicks: 4, harvestHungerCost: .3, harvestWear: .8, edible: true, hungerRestore: 3, eatWear: 1, sound: "bird.wav", volume: .65 },
 
     // 这些节点可能出现在土块下方的隐藏层；每种都可单独替换音频与音量。
     土: { emoji: "🟫", children: ["土块"], hiddenLayer: true, sound: "soil.wav", volume: .6 },
@@ -56,6 +59,7 @@
     原木: "沉甸甸的一截木头。需要多花几下功夫，才会进入你的背包。",
     花: "一朵轻盈的花。可以采走，也可以在饿的时候吃掉它。",
     种子: "小小的种子，能填一点肚子；不过有时它也会让你不太舒服。",
+    鸟: "一只在树间飞动的小鸟。用手多抓几次，才能把它真正捕获；饿的时候也能吃掉它。",
     土: "脚下的一层土。挖开它，下面也许有矿，也许有更深的路。",
     土块: "一块刚挖出的泥土。它不值钱，但每一层秘密都从这里开始。",
     铁矿: "埋在土里的铁矿。打开它，收集属于你的铁块。",

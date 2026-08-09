@@ -8,6 +8,18 @@ const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_
 
 const random = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
+/** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
+const spawnCountRange = definition => {
+  const configured = definition?.spawnCount;
+  if (Array.isArray(configured)) {
+    const min = Math.max(0, Math.floor(configured[0] || 0));
+    const max = Math.max(min, Math.floor(configured[1] ?? min));
+    return [min, max];
+  }
+  const count = Math.max(0, Math.floor(configured ?? 1));
+  return [count, count];
+};
+
 class World {
   /** 创建树、身体、背包及其初始状态。 */
   constructor(width, height) {
@@ -114,6 +126,18 @@ class World {
   /** 展开普通世界节点；土也只会展开出一层终端土块。 */
   expand(node) {
     if (node.children.length) {
+      // 兼容旧存档：必定出现的概率节点会补齐到 spawnCount 设定的最小数量。
+      (rules[node.type] || []).filter(type => NODE_TYPES[type]?.spawnChance >= 1).forEach(type => {
+        const [minimum] = spawnCountRange(NODE_TYPES[type]);
+        const missing = Math.max(0, minimum - node.children.filter(child => child.type === type).length);
+        for (let index = 0; index < missing; index++) {
+          const position = this.findPosition(node);
+          const child = new Node(type, position.x, position.y);
+          node.children.push(child);
+          this.nodes.push(child);
+          this.edges.push({ from: node, to: child });
+        }
+      });
       node.open = true;
       this.showOpenDescendants(node);
       return [];
@@ -123,8 +147,19 @@ class World {
 
     const created = [];
     const count = random(3, 6);
-    for (let i = 0; i < count; i++) {
-      const type = available[Math.floor(Math.random() * available.length)];
+    // 概率子节点按“本次展开是否出现”判定；出现后按 spawnCount 生成多个同类型节点。
+    const specialChildren = available.flatMap(type => {
+      const definition = NODE_TYPES[type];
+      if (definition?.spawnChance === undefined || Math.random() >= definition.spawnChance) return [];
+      const [minimum, maximum] = spawnCountRange(definition);
+      return Array.from({ length: random(minimum, maximum) }, () => type);
+    });
+    const regularChildren = available.filter(type => NODE_TYPES[type]?.spawnChance === undefined);
+    for (let i = 0; i < Math.max(count, specialChildren.length); i++) {
+      // 先生成本轮已掷中的特殊节点，其余名额由普通子节点填充。
+      const type = i < specialChildren.length
+        ? specialChildren[i]
+        : regularChildren[Math.floor(Math.random() * regularChildren.length)];
       const position = this.findPosition(node);
       const child = new Node(type, position.x, position.y);
       node.children.push(child);
@@ -167,6 +202,51 @@ class World {
     node.x += dx;
     node.y += dy;
     node.children.forEach(child => this.moveUI(child, dx, dy));
+  }
+
+  /** 返回节点的直接父节点；根节点没有父节点。 */
+  parentOf(node) {
+    return this.edges.find(edge => edge.to === node)?.from || null;
+  }
+
+  /** 在一条可见分支内寻找指定类型节点，用于动态节点迁徙时定位同类型父节点。 */
+  findVisibleDescendantByType(node, type) {
+    if (node.visible && node.type === type) return node;
+    for (const child of node.children) {
+      const found = this.findVisibleDescendantByType(child, type);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /**
+   * 父节点即将消失时，为动态子节点寻找新的同类型父节点。
+   * 搜索从父节点的兄弟分支开始，逐层上溯；到根仍找不到时，该动态节点消失。
+   */
+  migrateDynamicNode(node, formerParent) {
+    const requiredParentType = formerParent.type;
+    let branch = formerParent;
+    while (true) {
+      const ancestor = this.parentOf(branch);
+      if (!ancestor) break;
+      for (const sibling of ancestor.children.filter(child => child !== branch && child.visible)) {
+        const newParent = this.findVisibleDescendantByType(sibling, requiredParentType);
+        if (!newParent) continue;
+        formerParent.children = formerParent.children.filter(child => child !== node);
+        this.edges = this.edges.filter(edge => !(edge.from === formerParent && edge.to === node));
+        newParent.children.push(node);
+        this.edges.push({ from: newParent, to: node });
+        node.x = newParent.x;
+        node.y = newParent.y;
+        node.dynamicState = null;
+        return true;
+      }
+      branch = ancestor;
+    }
+    formerParent.children = formerParent.children.filter(child => child !== node);
+    this.nodes = this.nodes.filter(item => item !== node);
+    this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
+    return false;
   }
 
   /** 创建固定在屏幕底部中央的三组数值资源节点；每组都可按数量拆出临时节点。 */
@@ -371,7 +451,12 @@ class World {
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);
-      if (parent.children.length === 0 && parent.open) this.removeNodeAndEmptyParents(parent);
+      // 动态子节点不阻止父节点消失：先迁徙它们，再按普通空节点规则递归清理父节点。
+      const structuralChildren = parent.children.filter(child => !child.dynamic);
+      if (structuralChildren.length === 0 && parent.open) {
+        parent.children.filter(child => child.dynamic).forEach(child => this.migrateDynamicNode(child, parent));
+        this.removeNodeAndEmptyParents(parent);
+      }
     });
     return revealed;
   }

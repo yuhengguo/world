@@ -36,6 +36,8 @@ class Node {
     this.poisoned = this.poisonChance > 0 && Math.random() < this.poisonChance;
     this.durability = definition.durability ?? null;
     this.lost = false;
+    // 动态节点的移动规则由独立 dynamic.js 执行，Node 仅保存配置标记。
+    this.dynamic = definition.dynamic || null;
   }
 }
 

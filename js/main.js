@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { AudioManager, DetailPanel, Interaction, Renderer, UI, World } = window.TreeWorld;
+const { AudioManager, DetailPanel, DynamicNodeController, Interaction, Renderer, UI, World } = window.TreeWorld;
 
 const canvas = document.getElementById("canvas");
 
@@ -16,6 +16,7 @@ function resize() {
 
 resize();
 const world = new World(canvas.width, canvas.height);
+const dynamicNodes = new DynamicNodeController(world);
 const ui = new UI();
 const audio = new AudioManager();
 audio.startBackground();
@@ -50,6 +51,7 @@ window.addEventListener("resize", () => {
 /** requestAnimationFrame 驱动 Canvas 持续重绘，以显示颤动与悬停状态。 */
 function frame(now) {
   world.tick(now);
+  dynamicNodes.tick(now);
   restartButton.hidden = !world.gameOver;
   // 黏附到鼠标的节点优先成为唯一蓝色焦点；没有黏附节点时由普通选中状态决定。
   const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem
