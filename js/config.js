@@ -8,7 +8,8 @@
   window.TreeWorld = window.TreeWorld || {};
 
   const NODE_SIZE = { width: 100, height: 60 };
-  const ZOOM = { min: 0.4, max: 2.5, sensitivity: 0.0001 };
+  // min 越小，可缩小得越远；山与森林节点变多后可用更大的视野查看整体结构。
+  const ZOOM = { min: 0.15, max: 2.5, sensitivity: 0.0001 };
   // 全局随机种子：修改这个整数后会生成一套新的世界；保持不变即可复刻同一套随机结果。
   // 注意：要完全复刻鸟的飞行位置，也需要以相同节奏执行相同的操作。
   const RANDOM_SEED = 202608101;
