@@ -12,17 +12,6 @@ html, body {
 
 canvas { display: block; }
 
-#tip {
-  position: fixed;
-  z-index: 2;
-  top: 70px;
-  left: 20px;
-  color: #fff;
-  font: 14px "Microsoft YaHei", sans-serif;
-  line-height: 1.8;
-  pointer-events: none;
-}
-
 /* 游戏结束时显示在画面中央的重新开始按钮。 */
 #restartButton {
   position: fixed;
@@ -54,6 +43,53 @@ canvas { display: block; }
   font: 11px "Microsoft YaHei", sans-serif;
   outline: none;
 }
+
+/* 右侧详情页不属于 Canvas：收起后仅保留箭头，展开后显示最近一次选中的节点。 */
+#nodeDetailPanel {
+  position: fixed;
+  z-index: 5;
+  top: 50%;
+  right: 0;
+  width: 280px;
+  min-height: 265px;
+  transform: translateY(-50%);
+  border: 1px solid #7ea7bc;
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  color: #eaf7ff;
+  background: rgba(15, 24, 30, .95);
+  box-shadow: -8px 8px 28px rgba(0, 0, 0, .3);
+  transition: transform .22s ease;
+}
+
+#nodeDetailPanel.collapsed { transform: translate(280px, -50%); }
+
+#nodeDetailToggle {
+  position: absolute;
+  top: 50%;
+  left: -35px;
+  width: 35px;
+  height: 56px;
+  transform: translateY(-50%);
+  border: 1px solid #7ea7bc;
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  color: #dff4ff;
+  background: #192a34;
+  font: bold 22px sans-serif;
+  cursor: pointer;
+}
+
+.detail-content { padding: 22px 22px 20px; }
+.detail-heading { display: flex; gap: 13px; align-items: center; }
+#detailEmoji { font: 42px serif; }
+#detailName { display: block; font: bold 21px "Microsoft YaHei", sans-serif; }
+#detailKind { display: block; margin-top: 3px; color: #8ec7e5; font: 12px "Microsoft YaHei", sans-serif; }
+#detailDescription { min-height: 44px; color: #c9dce7; font: 14px/1.65 "Microsoft YaHei", sans-serif; }
+.detail-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.detail-fact { padding: 8px; border: 1px solid rgba(142, 199, 229, .28); border-radius: 5px; background: rgba(142, 199, 229, .08); }
+.detail-fact small { display: block; color: #8ec7e5; font: 11px "Microsoft YaHei", sans-serif; }
+.detail-fact b { display: block; margin-top: 2px; color: #fff; font: 14px "Microsoft YaHei", sans-serif; }
 
 /* 所有操作反馈统一展示在屏幕顶端中央。 */
 #status {

@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { AudioManager, Interaction, Renderer, UI, World } = window.TreeWorld;
+const { AudioManager, DetailPanel, DynamicNodeController, Interaction, Renderer, UI, World } = window.TreeWorld;
 
 const canvas = document.getElementById("canvas");
 
@@ -16,10 +16,15 @@ function resize() {
 
 resize();
 const world = new World(canvas.width, canvas.height);
+const dynamicNodes = new DynamicNodeController(world);
 const ui = new UI();
 const audio = new AudioManager();
+audio.startBackground();
+// 某些浏览器要求用户手势才能播放声音；首次点击会自动补启背景音乐。
+canvas.addEventListener("pointerdown", () => audio.startBackground(), { once: true });
 const interaction = new Interaction(canvas, world, ui, audio);
 const renderer = new Renderer(canvas, world, ui);
+const detailPanel = new DetailPanel();
 const restartButton = document.getElementById("restartButton");
 
 // 固定的刷新节点：回退最深的一层展开，并将可拖动 UI 放回初始化位置。
@@ -46,8 +51,16 @@ window.addEventListener("resize", () => {
 /** requestAnimationFrame 驱动 Canvas 持续重绘，以显示颤动与悬停状态。 */
 function frame(now) {
   world.tick(now);
+  dynamicNodes.tick(now);
   restartButton.hidden = !world.gameOver;
-  renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox);
+  // 黏附到鼠标的节点优先成为唯一蓝色焦点；没有黏附节点时由普通选中状态决定。
+  const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem
+    || (interaction.handActive && world.uiNodes.find(node => node.type === "手"))
+    || (interaction.mouthActive && world.uiNodes.find(node => node.type === "嘴"));
+  renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox, attachedNode);
+  // 多选时取最后一个节点作为详情焦点；没有选中节点时由详情页自行保留最近一次信息。
+  const selectedNode = [...world.nodes, ...world.uiNodes].filter(node => node.selected).at(-1) || attachedNode || null;
+  detailPanel.update(selectedNode);
   requestAnimationFrame(frame);
 }
 

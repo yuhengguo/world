@@ -15,12 +15,20 @@ class Renderer {
   }
 
   /** 绘制普通节点；采集颤动仅作用于这个节点自身的视觉内容。 */
-  drawNode(node, hovered, handActive, now) {
+  drawNode(node, hovered, handActive, now, scale = 1, activeBlue = null, allowMultipleBlue = false) {
     const { ctx } = this;
     ctx.save();
+    // 手、嘴等指定 UI 工具围绕自身中心缩放，位置仍保持在屏幕坐标系中。
+    if (scale !== 1) {
+      ctx.translate(node.x, node.y);
+      ctx.scale(scale, scale);
+      ctx.translate(-node.x, -node.y);
+    }
     if (node.shakeUntil > now) ctx.translate(Math.sin(now * .045) * 4, Math.cos(now * .0765) * 3);
     ctx.globalAlpha = node.type === "手" && handActive ? .45 : .78;
-    ctx.fillStyle = node.selected ? "#1976d2" : "#222";
+    // 常规状态只让一个焦点节点变蓝；框选作为特殊状态，允许多节点同时显示蓝色。
+    const blue = activeBlue ? node === activeBlue : (allowMultipleBlue ? node.selected : node.selected);
+    ctx.fillStyle = blue ? "#1976d2" : "#222";
     ctx.fillRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
     ctx.strokeStyle = "#aaa";
     ctx.strokeRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
@@ -45,19 +53,17 @@ class Renderer {
       ctx.textBaseline = "alphabetic";
       const quantity = Number.isInteger(node.quantity) ? node.quantity : node.quantity.toFixed(1);
       ctx.fillText(`×${quantity}`, node.x - 44, node.y + 24);
-      // 原节点底部同时提供滑条和数值输入框；资源以 0.1、背包以 1 为最小拆分单位。
+      // 原节点右下角只保留直接输入数量的框；滑条已取消。
       const minimum = 1;
       if (!node.detached && node.quantity > minimum) {
-        const maximum = Math.max(minimum, node.quantity - minimum);
-        const ratio = ((node.splitAmount || minimum) - minimum) / Math.max(minimum, maximum - minimum);
-        ctx.fillStyle = "#555";
-        ctx.fillRect(node.x + 10, node.y + 17, 33, 6);
-        ctx.fillStyle = "#8bd3ff";
-        ctx.fillRect(node.x + 10, node.y + 17, 33 * ratio, 6);
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(node.x + 9 + 33 * ratio, node.y + 15, 3, 10);
         ctx.strokeStyle = "#8bd3ff";
-        ctx.strokeRect(node.x - 46, node.y + 14, 48, 16);
+        ctx.strokeRect(node.x + 1, node.y + 14, 47, 16);
+        // 输入框关闭后仍显示最近确认的分离数量，让玩家知道下一次会拆出多少。
+        ctx.fillStyle = "#dff4ff";
+        ctx.font = "11px Microsoft YaHei";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(node.splitAmount || minimum), node.x + 24, node.y + 22);
       }
     }
     // 手、嘴的底部耐久条独立于采集进度条；归零后该节点会被隐藏。
@@ -205,8 +211,12 @@ class Renderer {
     ctx.fillText("点击“重新开始”创建一局新的游戏", canvas.width / 2, canvas.height / 2 + 28);
   }
 
-  draw(camera, hovered, handActive, now, selectionBox) {
+  draw(camera, hovered, handActive, now, selectionBox, activeBlue = null) {
     const { ctx, canvas, world } = this;
+    const selectedWorldCount = world.nodes.filter(node => node.selected).length;
+    const selectedUICount = world.uiNodes.filter(node => node.selected).length;
+    // 框选结束后保留的多选也视为框选特殊状态，直到玩家进行新的单节点操作。
+    const allowMultipleBlue = !activeBlue && (Boolean(selectionBox) || selectedWorldCount + selectedUICount > 1);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.translate(camera.x, camera.y);
@@ -217,7 +227,7 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
     });
-    world.nodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now));
+    world.nodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
     ctx.restore();
 
     const hand = world.uiNodes.find(node => node.type === "手");
@@ -232,7 +242,7 @@ class Renderer {
     }
     this.drawBackpackLinks();
     this.drawResourceLinks();
-    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now));
+    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
     this.drawSelectionBox(selectionBox);
     this.drawGameOver();
   }

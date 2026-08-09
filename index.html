@@ -13,20 +13,28 @@
   <!-- 数值拆分输入框由 interaction.js 在点击节点右下角输入区时定位并显示。 -->
   <input id="splitInput" type="number" min="1" step="1" inputmode="decimal" hidden aria-label="拆分数量">
 
-  <div id="tip">
-    左键：选中 / 展开　拖动：移动节点　滚轮：缩放　中键：移动地图<br>
-    点击身体展开手；点击手后采集末端节点；右键让手归位
-  </div>
+  <!-- 右侧节点详情页：由 detail-panel.js 根据当前或最近一次选择的节点更新。 -->
+  <aside id="nodeDetailPanel" aria-label="节点详情">
+    <button id="nodeDetailToggle" type="button" aria-label="收起节点详情">&gt;</button>
+    <div class="detail-content">
+      <div class="detail-heading"><span id="detailEmoji">◌</span><div><strong id="detailName">节点详情</strong><small id="detailKind">等待选择</small></div></div>
+      <p id="detailDescription">选中任意节点后，这里会显示它的说明。</p>
+      <div id="detailFacts" class="detail-facts"></div>
+    </div>
+  </aside>
+
   <div id="status">先点击树节点展开，直到出现花、种子或原木。</div>
 
   <!-- 普通脚本按依赖顺序加载，兼容直接打开 file:// 本地文件的场景。 -->
   <script src="js/config.js"></script>
   <script src="js/node.js"></script>
   <script src="js/world.js"></script>
+  <script src="js/dynamic.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/interaction.js"></script>
+  <script src="js/detail-panel.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

@@ -46,21 +46,18 @@ class Interaction {
 
   /** 判断一点是否落在节点矩形范围内。 */
   hit(node, point) {
-    return Math.abs(point.x - node.x) < NODE_SIZE.width / 2 && Math.abs(point.y - node.y) < NODE_SIZE.height / 2;
+    const scale = node.scalesWithWorld ? this.camera.scale : 1;
+    return Math.abs(point.x - node.x) < NODE_SIZE.width * scale / 2 && Math.abs(point.y - node.y) < NODE_SIZE.height * scale / 2;
   }
 
-  /** 判断是否点中背包数值节点右下角的数量分离条。 */
-  hitSplitBar(node, event) {
-    return node.isNumericPile && !node.detached
-      && event.clientX >= node.x + 10 && event.clientX <= node.x + 43
-      && event.clientY >= node.y + 15 && event.clientY <= node.y + 27;
-  }
-
-  /** 判断是否点中数值节点左下的直接输入框区域。 */
+  /** 判断是否点中数值节点右下的直接输入框区域。 */
   hitQuantityBox(node, event) {
+    const scale = node.scalesWithWorld ? this.camera.scale : 1;
+    const localX = (event.clientX - node.x) / scale;
+    const localY = (event.clientY - node.y) / scale;
     return node.isNumericPile && !node.detached
-      && event.clientX >= node.x - 46 && event.clientX <= node.x + 2
-      && event.clientY >= node.y + 14 && event.clientY <= node.y + 30;
+      && localX >= 1 && localX <= 48
+      && localY >= 14 && localY <= 30;
   }
 
   /** 按鼠标在分离条中的水平位置换算本次需要拆出的数量。 */
@@ -81,15 +78,24 @@ class Interaction {
     this.quantityInput.max = String(maximum);
     this.quantityInput.step = String(minimum);
     this.quantityInput.value = String(node.splitAmount || minimum);
-    this.quantityInput.style.left = `${node.x - 46}px`;
-    this.quantityInput.style.top = `${node.y + 14}px`;
+    const scale = node.scalesWithWorld ? this.camera.scale : 1;
+    this.quantityInput.style.left = `${node.x + 1 * scale}px`;
+    this.quantityInput.style.top = `${node.y + 14 * scale}px`;
+    this.quantityInput.style.transformOrigin = "top left";
+    this.quantityInput.style.transform = `scale(${scale})`;
     this.quantityInput.hidden = false;
-    this.quantityInput.focus();
-    this.quantityInput.select();
+    // 等当前鼠标点击完成后再聚焦，避免 Canvas 的 click 事件抢走输入焦点。
+    requestAnimationFrame(() => {
+      this.quantityInput.focus();
+      this.quantityInput.select();
+    });
   }
 
-  /** 将输入框的值裁剪到可拆范围，并同步给滑条。 */
-  commitQuantityInput() {
+  /**
+   * 将输入值裁剪到可拆范围。按回车时会立即创建一个轻微错位、已选中的拆分节点；
+   * 失焦仅保存数量，方便玩家继续用普通点击方式进行拆分。
+   */
+  commitQuantityInput(splitImmediately = false) {
     const node = this.quantityInputNode;
     if (!node) return;
     const minimum = 1;
@@ -99,6 +105,23 @@ class Interaction {
     node.splitAmount = Math.round(value);
     this.quantityInput.hidden = true;
     this.quantityInputNode = null;
+    if (!splitImmediately) return;
+
+    const detached = node.backpackItemOwner
+      ? this.world.detachBackpackItem(node)
+      : this.world.detachResourceItem(node);
+    if (!detached) {
+      this.ui.setStatus("当前数量不足，无法继续分离。");
+      return;
+    }
+    // 新节点在原 pile 右上方轻微错开，既可看见数量变化，也保留来源连线。
+    const scale = node.scalesWithWorld ? this.camera.scale : 1;
+    detached.x = node.x + 22 * scale;
+    detached.y = node.y - 14 * scale;
+    this.world.uiNodes.forEach(item => item.selected = false);
+    detached.selected = true;
+    this.audio.play(detached.type);
+    this.ui.setStatus(`已从 ${node.type} 分离 ×${detached.quantity}。`);
   }
 
   /** 判断节点中心是否位于当前框选区域内。 */
@@ -163,16 +186,19 @@ class Interaction {
       return true;
     }
     if (node.type === "刷新") {
+      this.audio.play(node.type);
       this.onReset?.();
       return true;
     }
     if (node.type === "思考") {
+      this.audio.play(node.type);
       this.ui.setStatus("思考节点：之后可以在这里接入想法或任务。");
       return true;
     }
     if (node.type === "手") {
       if (node.lost) { this.ui.setStatus("手已经磨损殆尽，无法再使用。"); return true; }
       this.handActive = true;
+      this.audio.play(node.type);
       node.x = event.clientX;
       node.y = event.clientY;
       this.canvas.style.cursor = "none";
@@ -182,6 +208,7 @@ class Interaction {
     if (node.type === "嘴") {
       if (node.lost) { this.ui.setStatus("嘴已经磨损殆尽，无法再使用。"); return true; }
       this.mouthActive = true;
+      this.audio.play(node.type);
       node.x = event.clientX;
       node.y = event.clientY;
       this.canvas.style.cursor = "none";
@@ -204,10 +231,17 @@ class Interaction {
 
   /** 注册所有 Canvas 事件。 */
   bind() {
+    // 输入框是真实 HTML 控件；它自身的鼠标事件绝不能再传递给 Canvas。
+    ["pointerdown", "mousedown", "click"].forEach(name => {
+      this.quantityInput.addEventListener(name, event => {
+        event.stopPropagation();
+        this.quantityInput.focus();
+      });
+    });
     this.quantityInput.addEventListener("change", () => this.commitQuantityInput());
     this.quantityInput.addEventListener("blur", () => this.commitQuantityInput());
     this.quantityInput.addEventListener("keydown", event => {
-      if (event.key === "Enter") { event.preventDefault(); this.commitQuantityInput(); }
+      if (event.key === "Enter") { event.preventDefault(); this.commitQuantityInput(true); }
       if (event.key === "Escape") { this.quantityInput.hidden = true; this.quantityInputNode = null; }
     });
     this.canvas.addEventListener("mousedown", event => {
@@ -253,15 +287,16 @@ class Interaction {
           return;
         }
         if (uiNode.fixedUI && !uiNode.resourcePileOwner) return;
-        if (this.hitQuantityBox(uiNode, event)) { this.openQuantityInput(uiNode); return; }
-        // 背包数值节点右下角的分离条只调整数量，不会触发拖动。
-        if (this.hitSplitBar(uiNode, event)) {
-          this.splitControl = uiNode;
-          this.updateSplitAmount(uiNode, event.clientX);
+        if (this.hitQuantityBox(uiNode, event)) {
+          event.preventDefault();
+          this.openQuantityInput(uiNode);
+          // 本次点击只服务于打开输入框，紧随其后的 Canvas click 必须被吞掉。
+          this.skipClickAfterDrag = true;
           return;
         }
         // 点击背包节点会按分离条数量拆出；仅剩一件时则移动整个节点。
         if (uiNode.backpackItemOwner || uiNode.resourcePileOwner) {
+          this.audio.play(uiNode.type);
           // 双击选中的背包节点下一次拖动保持整体，不再触发拆分。
           if (uiNode.pileGroupSelected) {
             this.selectedUI = uiNode;
@@ -270,10 +305,13 @@ class Interaction {
             this.dragging = false;
             return;
           }
-          const detached = uiNode.backpackItemOwner
-            ? this.world.detachBackpackItem(uiNode)
-            : this.world.detachResourceItem(uiNode);
-          if (uiNode.resourcePileOwner && !detached) {
+          // 已经拆出的节点无需再次拆分，直接让它跟随光标；原节点才执行一次新的拆分。
+          const detached = uiNode.detached
+            ? uiNode
+            : (uiNode.backpackItemOwner
+              ? this.world.detachBackpackItem(uiNode)
+              : this.world.detachResourceItem(uiNode));
+          if (uiNode.resourcePileOwner && !uiNode.detached && !detached) {
             this.ui.setStatus("资源节点需至少保留 1，无法继续拆出。");
             return;
           }
@@ -303,11 +341,26 @@ class Interaction {
       const node = this.world.nodes.find(item => item.visible && !item.locked && this.hit(item, point));
       if (!node) {
         // 空白处按住左键进入框选模式，选框使用屏幕坐标以便直接绘制。
+        // 没有节点黏附时，空白左键同时取消世界和 UI 的全部旧选择。
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
         this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
+        return;
+      }
+      // 动态节点（鸟）只能被选中查看，不会黏附光标或被普通拖动；手采集仍由 click 阶段处理。
+      if (node.dynamic) {
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
+        node.selected = true;
+        this.skipClickAfterDrag = true;
         return;
       }
       // 终端节点使用拾取式拖动：第一次左键黏附到光标，不进入选中状态。
       if (this.world.isHarvestable(node)) {
+        // 终端节点进入黏附状态时也成为当前选中节点，供蓝色焦点和详情页使用。
+        this.world.nodes.forEach(item => item.selected = false);
+        this.world.uiNodes.forEach(item => item.selected = false);
+        node.selected = true;
         this.carriedTerminal = node;
         this.carriedTerminalOrigin = { x: node.x, y: node.y };
         this.skipClickAfterDrag = true;
@@ -407,8 +460,9 @@ class Interaction {
       if (this.mouthActive) {
         const food = [...this.world.uiNodes].reverse().find(node => node.backpackItemOwner && node.edible && node.visible && this.hit(node, event));
         if (!food) return;
-        const result = this.world.eatBackpackItem(food);
+        const result = this.world.eatBackpackItem(food, performance.now());
         if (!result.eaten) return;
+        this.audio.play(food.type);
         const wear = this.world.wearTool("嘴", this.world.toolWearFor("嘴", food));
         if (wear.broken) this.mouthActive = false;
         this.ui.setStatus(result.poisoned ? "吃下了中毒食物，生命受损。" : "吃下食物，饥饿值得到补充。 ");
@@ -432,6 +486,8 @@ class Interaction {
         const resourceResult = this.world.consumeHarvestResources(target);
         if (resourceResult.gameOver) { this.ui.setStatus("生命归零，游戏结束。请点击“重新开始”。"); return; }
         const result = this.world.harvest(target, performance.now());
+        // 清空节点后若揭示了下一张隐藏层卡片，播放专用的层级揭示音效。
+        if (result.revealed) this.audio.play("隐藏层");
         const wear = this.world.wearTool("手", this.world.toolWearFor("手", target));
         if (wear.broken) {
           this.handActive = false;
@@ -456,7 +512,7 @@ class Interaction {
         node.selected = true;
         return;
       }
-      if (node.open) this.world.collapse(node);
+      if (node.open) { this.world.collapse(node); this.audio.play(node.type); }
       else { this.world.expand(node); this.audio.play(node.type); }
     });
 
