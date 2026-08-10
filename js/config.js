@@ -12,7 +12,7 @@
   const ZOOM = { min: 0.15, max: 2.5, sensitivity: 0.0001 };
   // 全局随机种子：修改这个整数后会生成一套新的世界；保持不变即可复刻同一套随机结果。
   // 注意：要完全复刻鸟的飞行位置，也需要以相同节奏执行相同的操作。
-  const RANDOM_SEED = 202608101;
+  const RANDOM_SEED = 202608103;
 
   /** 可复位的伪随机数发生器；项目内所有随机结果必须从这里取得，不能直接调用 Math.random()。 */
   class SeededRandom {
@@ -85,7 +85,7 @@
     原木: { emoji: "🪵", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
     花: { emoji: "🌸", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
     种子: { emoji: "🌰", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
-    蘑菇: { emoji: "🍄", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
+    蘑菇: { emoji: "🍄", children: [], spawnChance: 1, spawnCount: [1, 3], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
 
     // 动态节点示例：spawnChance 是每次展开树时出现鸟群的概率；spawnCount 是出现后鸟的随机数量范围（含两端）。
     // 例如改成 spawnChance: .5, spawnCount: [1, 4]，表示有 50% 概率出现 1 到 4 只鸟。
