@@ -26,6 +26,7 @@ class Interaction {
     this.carriedTerminalOrigin = null;
     this.carriedUIItem = null;
     this.carriedUIOrigin = null;
+    this.placeKeyHeld = false;
     this.splitControl = null;
     this.quantityInput = document.getElementById("splitInput");
     this.quantityInputNode = null;
@@ -232,6 +233,15 @@ class Interaction {
 
   /** 注册所有 Canvas 事件。 */
   bind() {
+    // 空格是放置修饰键：仅在背包物品黏附光标时阻止浏览器默认滚屏行为。
+    window.addEventListener("keydown", event => {
+      if (event.code !== "Space" || document.activeElement === this.quantityInput) return;
+      this.placeKeyHeld = true;
+      if (this.carriedUIItem?.backpackItemOwner) event.preventDefault();
+    });
+    window.addEventListener("keyup", event => {
+      if (event.code === "Space") this.placeKeyHeld = false;
+    });
     // 输入框是真实 HTML 控件；它自身的鼠标事件绝不能再传递给 Canvas。
     ["pointerdown", "mousedown", "click"].forEach(name => {
       this.quantityInput.addEventListener(name, event => {
@@ -262,6 +272,26 @@ class Interaction {
       }
       // pile 单层第二次左键放置；若放回原 pile 区域，自动重新归类。
       if (this.carriedUIItem) {
+        // 空格 + 左键：把背包中已分离的单件物品放到一条有效的矿物地层上。
+        // 拆出的物品可放置；背包只剩最后 1 件时，也允许将这一整层直接放入世界。
+        if (this.placeKeyHeld && this.carriedUIItem.backpackItemOwner && (this.carriedUIItem.detached || this.carriedUIItem.quantity === 1)) {
+          const point = this.worldPosition(event);
+          const groundNode = [...this.world.nodes].reverse().find(node => node.visible && !node.locked && this.hit(node, point));
+          const result = this.world.placeBackpackItem(this.carriedUIItem, groundNode);
+          if (!result.placed) {
+            this.ui.setStatus(`无法放置：${result.reason}`);
+            this.skipClickAfterDrag = true;
+            return;
+          }
+          this.audio.play(result.node.type);
+          this.ui.setStatus(`已将 ${result.node.type} 放置在 ${groundNode.type} 上。`);
+          if (!result.itemRemaining) {
+            this.carriedUIItem = null;
+            this.carriedUIOrigin = null;
+          }
+          this.skipClickAfterDrag = true;
+          return;
+        }
         // 双击已拆出的背包物品时，无论它当前在哪里都强制归回来源节点。
         if (event.detail >= 2 && this.carriedUIItem.backpackItemOwner && this.carriedUIItem.detached) {
           this.world.mergeBackpackItem(this.carriedUIItem);
@@ -346,6 +376,16 @@ class Interaction {
         this.world.nodes.forEach(item => item.selected = false);
         this.world.uiNodes.forEach(item => item.selected = false);
         this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
+        return;
+      }
+      // 替补 pile 的首层不能被拆成独立终端节点，但可像原树一样整体移动。
+      // moveTree 会递归移动 underlays，因此拖动首层会带着整条土、矿物、基岩替补链同行。
+      if (node.replacementLayer) {
+        this.wasSelectedOnDown = node.selected;
+        this.selected = node;
+        this.down = { x: event.clientX, y: event.clientY };
+        this.lastWorld = point;
+        this.dragging = false;
         return;
       }
       // 动态节点（鸟）只能被选中查看，不会黏附光标或被普通拖动；手采集仍由 click 阶段处理。

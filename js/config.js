@@ -74,21 +74,21 @@
     鸟: { emoji: "🐦", children: [], spawnChance: 1, spawnCount: [1, 3], dynamic: { speed: 420, turnInterval: [650, 1500] }, harvestClicks: 4, harvestHungerCost: .3, harvestWear: .8, edible: true, hungerRestore: 3, eatWear: 1, sound: "bird.wav", volume: .65 },
 
     // 这些节点可能出现在土块下方的隐藏层；每种都可单独替换音频与音量。
-    土: { emoji: "🟫", children: ["土块"], hiddenLayer: true, sound: "soil.wav", volume: .6 },
+    土: { emoji: "🟫", children: ["土块"], hiddenLayer: true, groundLayer: true, sound: "soil.wav", volume: .6 },
     土块: {
       emoji: "🟤", children: [], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .7,
       sound: "dirt-block.wav", // 文件路径：sounds/dirt-block.wav
       volume: .65 // 音量：65%。正确参数名是 volume，不是 volumn。
     },
-    铁矿: { emoji: "⚙️", children: ["铁块"], hiddenLayer: true, sound: "iron-ore.wav", volume: .65 },
+    铁矿: { emoji: "⚙️", children: ["铁块"], hiddenLayer: true, groundLayer: true, sound: "iron-ore.wav", volume: .65 },
     铁块: { emoji: "🔩", children: [], harvestClicks: 5, harvestHungerCost: .4, harvestWear: 1.1, sound: "iron-ingot.wav", volume: .7 },
-    铜矿: { emoji: "🟠", children: ["铜块"], hiddenLayer: true, sound: "copper-ore.wav", volume: .65 },
+    铜矿: { emoji: "🟠", children: ["铜块"], hiddenLayer: true, groundLayer: true, sound: "copper-ore.wav", volume: .65 },
     铜块: { emoji: "🟤", children: [], harvestClicks: 4, harvestHungerCost: .3, harvestWear: .9, sound: "copper-ingot.wav", volume: .7 },
-    金矿: { emoji: "🟡", children: ["金块"], hiddenLayer: true, sound: "gold-ore.wav", volume: .65 },
+    金矿: { emoji: "🟡", children: ["金块"], hiddenLayer: true, groundLayer: true, sound: "gold-ore.wav", volume: .65 },
     金块: { emoji: "🟨", children: [], harvestClicks: 7, harvestHungerCost: .6, harvestWear: 1.5, sound: "gold-ingot.wav", volume: .75 },
-    钻石: { emoji: "💎", children: ["钻石块"], hiddenLayer: true, sound: "diamond-ore.wav", volume: .7 },
+    钻石: { emoji: "💎", children: ["钻石块"], hiddenLayer: true, groundLayer: true, sound: "diamond-ore.wav", volume: .7 },
     钻石块: { emoji: "🔷", children: [], harvestClicks: 10, harvestHungerCost: .8, harvestWear: 2, sound: "diamond.wav", volume: .8 },
-    基岩: { emoji: "🪨", children: [], indestructible: true, sound: "bedrock.wav", volume: .7 },
+    基岩: { emoji: "🪨", children: [], groundLayer: true, indestructible: true, sound: "bedrock.wav", volume: .7 },
 
     身体: { emoji: "🧍", children: ["手", "嘴"], sound: "body.wav", volume: .7 },
     手: { emoji: "✋", children: [], durability: 100, durabilityRecovery: .5, defaultHarvestWear: 1, sound: "hand.wav", volume: .65 },

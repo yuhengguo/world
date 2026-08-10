@@ -82,14 +82,38 @@ class World {
       layer.visible = false;
       layer.hiddenUnderlay = true;
       layer.locked = true;
+      // 地层属于替补 pile；揭示后也不应像普通独立终端节点一样被单独拖动。
+      layer.replacementLayer = true;
       parent.underlays = [layer];
       parent = layer;
     }
   }
 
   /**
+   * 用 replacement 接替 node 在所有父节点中的位置。
+   * 这是“替补 pile”的唯一入口：替补节点继承上层节点的父级连接，而不是成为它的普通子节点。
+   */
+  replaceInParents(node, replacement) {
+    const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
+    parents.forEach(parent => {
+      const index = parent.children.indexOf(node);
+      if (index >= 0) {
+        if (parent.children.includes(replacement)) parent.children.splice(index, 1);
+        else parent.children[index] = replacement;
+      } else if (!parent.children.includes(replacement)) {
+        parent.children.push(replacement);
+      }
+      this.edges = this.edges.filter(edge => !(edge.from === parent && edge.to === node));
+      if (!this.edges.some(edge => edge.from === parent && edge.to === replacement)) {
+        this.edges.push({ from: parent, to: replacement });
+      }
+    });
+    return parents;
+  }
+
+  /**
    * 仅揭示所属节点的下一层，不会一次把所有隐藏层放进世界。
-   * 被揭示的地下层会提升为原节点父级的子节点：原树消失后它仍能留在森林中，并拥有清晰的连接线。
+   * 被揭示的地下层会接替原节点，继承其父级连接；树、土、矿物都遵循同一规则。
    */
   revealNextUnderlay(node) {
     const next = node.underlays[0];
@@ -98,13 +122,74 @@ class World {
     next.hiddenUnderlay = false;
     next.locked = false;
     if (!this.nodes.includes(next)) this.nodes.push(next);
-    // 地下层不再依赖即将消失的树，而是提升到树所属的森林（或当前节点的直接父级）中。
-    const parent = this.edges.find(edge => edge.to === node)?.from || this.root;
-    if (!parent.children.includes(next)) parent.children.push(next);
-    if (!this.edges.some(edge => edge.from === parent && edge.to === next)) {
-      this.edges.push({ from: parent, to: next });
+    const inheritedParents = this.replaceInParents(node, next);
+    // 没有父级连接的孤立节点才回退挂到世界根，保证替补节点仍可见、可操作。
+    if (!inheritedParents.length && !this.root.children.includes(next)) {
+      this.root.children.push(next);
+      this.edges.push({ from: this.root, to: next });
     }
     return next;
+  }
+
+  /**
+   * 检查一个地层节点及其“替代链”是否能承载放置物。
+   * 显示连接可以把地层提升到森林下，但真实地层顺序始终保留在 underlays 中。
+   */
+  canPlaceOn(node) {
+    const visited = new Set();
+    let current = node;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const definition = NODE_TYPES[current.type] || {};
+      if (!definition.groundLayer) return false;
+      if (current.type === FINAL_HIDDEN_LAYER_TYPE) return true;
+      current = current.underlays[0] || null;
+    }
+    return false;
+  }
+
+  /**
+   * 消耗一个背包拆分物品，并让它接替当前最上层地层。
+   * 被覆盖的地层进入新物品的替补链；物品被移除后，该地层会再接替回来。
+   */
+  placeBackpackItem(item, groundNode) {
+    // 最后一件背包物品无法再“拆出”，但可以整层作为待放置物；底部生命、饥饿、专注资源仍不走此逻辑。
+    if (!item?.backpackItemOwner || item.quantity < 1) return { placed: false, reason: "需要先拿起一个背包物品。" };
+    if (!this.canPlaceOn(groundNode)) return { placed: false, reason: "这里下方必须是一条通向基岩的纯矿物地层。" };
+    // 曾经展开过的矿层保留其内部子节点数据，但只要当前已收起，就可作为完整替补层被覆盖。
+    // 这样放置物移除后，原矿层仍能按原来的展开状态继续被探索。
+    if (groundNode.open) return { placed: false, reason: "请先收起当前展开的地层。" };
+
+    const placed = new Node(item.type, groundNode.x, groundNode.y);
+    placed.placedInWorld = true;
+    placed.replacementLayer = true;
+    // 放置物成为替补 pile 的新首层，原地层则成为它的下一层，而非普通子节点。
+    placed.underlays = [groundNode];
+    groundNode.visible = false;
+    groundNode.hiddenUnderlay = true;
+    groundNode.locked = true;
+    this.nodes.push(placed);
+    this.replaceInParents(groundNode, placed);
+
+    // inventory 是背包总数的唯一来源；放置一件后先扣总数，再依照外部拆分数量回算原 pile。
+    this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
+    item.quantity -= 1;
+    const source = item.sourcePile;
+    if (item.quantity <= 0) {
+      this.backpack.children = this.backpack.children.filter(node => node !== item);
+      this.uiNodes = this.uiNodes.filter(node => node !== item);
+    }
+    if (source) {
+      const remainingDetached = this.backpack.children
+        .filter(node => node.type === source.type && node.detached)
+        .reduce((sum, node) => sum + node.quantity, 0);
+      source.quantity = Math.max(0, (this.inventory[source.type] || 0) - remainingDetached);
+      source.splitAmount = Math.min(source.splitAmount || 1, Math.max(1, source.quantity - 1));
+    } else if (item.quantity > 0) {
+      // 兼容未来允许整层放置多个物品的情况：未拆分的原 pile 也要维持正确的输入数量。
+      item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, item.quantity - 1));
+    }
+    return { placed: true, node: placed, itemRemaining: item.quantity > 0 };
   }
 
   /** 判断节点是否是规则上的终端节点，从而允许采集。 */
@@ -160,7 +245,8 @@ class World {
 
   /** 展开普通世界节点；土也只会展开出一层终端土块。 */
   expand(node) {
-    if (node.children.length) {
+    const structuralChildren = node.children.filter(child => !child.dynamic);
+    if (structuralChildren.length) {
       // 兼容旧存档：必定出现的概率节点会补齐到 spawnCount 设定的最小数量。
       (rules[node.type] || []).filter(type => NODE_TYPES[type]?.spawnChance >= 1).forEach(type => {
         const [minimum] = spawnCountRange(NODE_TYPES[type]);
@@ -183,6 +269,8 @@ class World {
     const specialChildren = available.flatMap(type => {
       const definition = NODE_TYPES[type];
       if (definition?.spawnChance === undefined || random.next() >= definition.spawnChance) return [];
+      // 已迁徙进来的同类动态节点会随这棵未展开树保留，不再额外重复生成同类节点。
+      if (node.children.some(child => child.dynamic && child.type === type)) return [];
       const [minimum, maximum] = spawnCountRange(definition);
       return Array.from({ length: random.integer(minimum, maximum) }, () => type);
     });
@@ -199,6 +287,8 @@ class World {
       created.push(this.createWorldChild(node, type));
     }
     node.open = true;
+    // 首次展开时若已暂存迁徙鸟，也要与新生成的树枝、树干一同显示。
+    node.children.forEach(child => child.visible = true);
     return created;
   }
 
@@ -272,6 +362,8 @@ class World {
         this.edges.push({ from: newParent, to: node });
         node.x = newParent.x;
         node.y = newParent.y;
+        // 迁徙到尚未展开的树时，鸟应随父树暂时隐藏；否则持续校验会把这棵未展开树误判为“只剩可见动态节点”。
+        node.visible = Boolean(newParent.visible && newParent.open);
         node.dynamicState = null;
         return true;
       }
@@ -291,8 +383,8 @@ class World {
     const candidates = this.nodes.filter(parent => {
       if (parent === this.root || parent.ui || parent.dynamic || !parent.children.length) return false;
       const onlyDynamicChildren = parent.children.every(child => child.dynamic);
-      // 已展开或仍有可见动态子节点时立刻处理；完全收起的分支保留到再次展开时再检查。
-      return onlyDynamicChildren && (parent.open || parent.children.some(child => child.visible));
+      // 只有已展开的静态节点才会被清理；未展开树可暂存迁徙来的鸟，待展开时再生成自己的静态分支。
+      return onlyDynamicChildren && parent.open;
     });
     candidates.forEach(parent => {
       // 前一个候选项可能已递归清理此节点，因此每次处理前重新确认它仍存在。
