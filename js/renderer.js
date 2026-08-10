@@ -243,6 +243,11 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
+    const sun = world.uiNodes.find(node => node.type === "太阳");
+    if (world.sky?.open && sun?.visible) {
+      ctx.strokeStyle = "#777";
+      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(sun.x, sun.y); ctx.stroke();
+    }
     this.drawBackpackLinks();
     this.drawResourceLinks();
     world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));

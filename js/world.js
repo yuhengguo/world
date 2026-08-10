@@ -37,6 +37,11 @@ class World {
     this.root.generationKey = "world-root";
     this.nodes.push(this.root);
 
+    // 天空属于固定屏幕层：它不是山的子节点，也不会因缩放、平移或拖动而改变位置。
+    this.sky = new Node("天空", width / 2, 75, true);
+    this.sky.fixedUI = true;
+    this.sky.celestialUI = true;
+
     // UI 使用屏幕坐标：初始化在左侧中部，永远不受世界相机缩放影响。
     // 身体固定在底栏、饥饿节点左侧，不允许被拖动。
     this.body = new Node("身体", width / 2 - 240, height - 75, true);
@@ -51,7 +56,7 @@ class World {
       body: { x: this.body.x, y: this.body.y },
       backpack: { x: this.backpack.x, y: this.backpack.y }
     };
-    this.uiNodes.push(this.body, this.backpack, this.thought, this.resetNode);
+    this.uiNodes.push(this.sky, this.body, this.backpack, this.thought, this.resetNode);
     this.createResourcePiles(width, height);
   }
 
@@ -462,6 +467,12 @@ class World {
       this.resourcePiles[type].y = height - 75;
     });
     this.syncResourcePiles();
+  }
+
+  /** 窗口宽度变化时，天空始终锚定在屏幕顶端正中央。 */
+  positionSky(width) {
+    this.sky.x = width / 2;
+    this.sky.y = 75;
   }
 
   /** 每次成功采集点击先消耗饥饿，饥饿不足的部分自动扣除生命。 */

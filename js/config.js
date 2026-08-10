@@ -74,6 +74,14 @@
   // 游戏启动后循环播放的背景音乐；volume 范围为 0 到 1。
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
+  // 游戏时间与第一版昼夜表现。一个白天从太阳进入屏幕右侧开始，到离开左侧结束；夜晚暂不显示天体。
+  const TIME_CONFIG = {
+    dayDuration: 60,
+    nightDuration: 20,
+    sunY: 165,
+    sunMargin: 90
+  };
+
   const NODE_TYPES = {
     // spawnChance 控制该类型出现的概率；spawnCount 控制出现后生成的数量范围（含两端）。
     山: { emoji: "⛰️", children: ["森林"], spawnChance: 1, spawnCount: [1, 1], sound: "mountain.wav", volume: .75 },
@@ -116,7 +124,9 @@
     刷新: { emoji: "🔄", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "refresh.wav", volume: .6 },
     饥饿: { emoji: "🍖", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "hunger.wav", volume: .55 },
     生命: { emoji: "❤️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "life.wav", volume: .55 },
-    专注: { emoji: "🎯", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "focus.wav", volume: .55 }
+    专注: { emoji: "🎯", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "focus.wav", volume: .55 },
+    天空: { emoji: "🌌", children: ["太阳"], spawnChance: 1, spawnCount: [1, 1], sound: "sky.wav", volume: .5 },
+    太阳: { emoji: "☀️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "sun.wav", volume: .55 }
   };
 
   // 面向玩家的节点说明。新增节点时在这里补一条，即可显示在右侧详情页。
@@ -149,7 +159,9 @@
     刷新: "想重新整理眼前的结构时，就按一下这里。",
     饥饿: "你的肚子正在计数。采集会消耗它，吃东西可以补回来。",
     生命: "这是你还能继续探索的余量。饥饿耗尽后，生命会替你付账。",
-    专注: "你的专注储备。先留在这里，未来它会成为更复杂行动的燃料。"
+    专注: "你的专注储备。先留在这里，未来它会成为更复杂行动的燃料。",
+    天空: "抬头看看天空。打开它，太阳会按照游戏中的时间穿过这片世界。",
+    太阳: "正在天空中运行的太阳。它不可以采集，只用来告诉你时间正在流逝。"
   };
 
   /* 以下派生数据由类型表自动生成，其他模块无需维护第二份节点信息。 */
@@ -177,7 +189,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, TIME_CONFIG, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();
