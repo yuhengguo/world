@@ -183,24 +183,14 @@ class World {
     // 放置物成为替补 pile 的新首层，原地层则作为下一层等待再次接替。
     this.pushReplacementHead(groundNode, placed);
 
-    // inventory 是背包总数的唯一来源；放置一件后先扣总数，再依照外部拆分数量回算原 pile。
+    // inventory 是背包总数的唯一来源；放置一件后只扣总数，显示数量由统一同步函数负责重算。
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
     item.quantity -= 1;
-    const source = item.sourcePile;
     if (item.quantity <= 0) {
       this.backpack.children = this.backpack.children.filter(node => node !== item);
       this.uiNodes = this.uiNodes.filter(node => node !== item);
     }
-    if (source) {
-      const remainingDetached = this.backpack.children
-        .filter(node => node.type === source.type && node.detached)
-        .reduce((sum, node) => sum + node.quantity, 0);
-      source.quantity = Math.max(0, (this.inventory[source.type] || 0) - remainingDetached);
-      source.splitAmount = Math.min(source.splitAmount || 1, Math.max(1, source.quantity - 1));
-    } else if (item.quantity > 0) {
-      // 兼容未来允许整层放置多个物品的情况：未拆分的原 pile 也要维持正确的输入数量。
-      item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, item.quantity - 1));
-    }
+    this.syncBackpackQuantity(item.type);
     return { placed: true, node: placed, itemRemaining: item.quantity > 0 };
   }
 
@@ -423,25 +413,29 @@ class World {
     Object.entries(this.resourcePiles).forEach(([type, anchor]) => {
       const detached = anchor.children.filter(item => item.detached);
       const detachedAmount = detached.reduce((sum, item) => sum + item.quantity, 0);
-      // 所有资源显示统一保留一位小数，避免 0.1 的浮点误差累积到节点数量上。
-      anchor.quantity = Math.max(0, Math.round((this.resources[type] - detachedAmount) * 10) / 10);
-      anchor.splitAmount = Math.min(anchor.splitAmount || 1, Math.max(1, anchor.quantity - 1));
+      // 所有资源显示统一保留一位小数，避免 7.00000000001 之类的浮点误差累积到输入框。
+      anchor.quantity = Math.max(0, Math.round((this.resources[type] - detachedAmount + Number.EPSILON) * 10) / 10);
+      // 资源可以保留小数余量：8.8 最多拆出 8，留下 0.8；以总量限幅可避免拆出期间把输入值错误压成 1。
+      const maximumSplit = Math.max(1, Math.floor(this.resources[type] + Number.EPSILON));
+      anchor.splitAmount = Math.min(anchor.splitAmount || 1, maximumSplit);
     });
   }
 
-  /** 将底部资源原节点按 1 为单位拆出；至少保留 1 点资源在原节点。 */
+  /** 将底部资源原节点按整数单位拆出；允许原节点保留不足 1 的小数余量。 */
   detachResourceItem(item) {
-    if (!item?.resourcePileOwner || item.detached || item.quantity <= 1) return null;
-    const rounded = Math.max(1, Math.min(Math.round(item.splitAmount || 1), Math.floor(item.quantity - 1)));
-    item.quantity = Math.round((item.quantity - rounded) * 10) / 10;
+    if (!item?.resourcePileOwner || item.detached) return null;
+    const maximum = Math.floor(item.quantity + Number.EPSILON);
+    if (maximum < 1) return null;
+    const amount = Math.max(1, Math.min(Math.round(Number(item.splitAmount) || 1), maximum));
     const detached = new Node(item.type, item.x, item.y, true);
-    detached.quantity = rounded;
+    detached.quantity = amount;
     detached.detached = true;
     detached.sourcePile = item;
     detached.resourcePileOwner = item;
     detached.isNumericPile = true;
     item.children.push(detached);
     this.uiNodes.push(detached);
+    this.syncResourcePiles();
     return detached;
   }
 
@@ -546,12 +540,33 @@ class World {
     });
   }
 
+  /** 返回某一类型目前仍被拆出、尚未归位的总数量；库存总数不在这里修改。 */
+  detachedBackpackQuantity(type) {
+    return this.backpack.children
+      .filter(item => item.type === type && item.detached)
+      .reduce((sum, item) => sum + item.quantity, 0);
+  }
+
+  /**
+   * 背包数量的唯一同步入口。
+   * 原 pile 显示数量始终等于库存总数减去同类已拆出的数量；放置、归位、拆分、进食均调用这里，
+   * 因而不会再分别做“加一”或“减一”的局部计算。
+   */
+  syncBackpackQuantity(type) {
+    const available = Math.max(0, (this.inventory[type] || 0) - this.detachedBackpackQuantity(type));
+    this.backpack.children
+      .filter(item => item.type === type && !item.detached && item.backpackItemOwner === this.backpack)
+      .forEach(item => {
+        item.quantity = available;
+        item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, available - 1));
+      });
+    return available;
+  }
+
   /** 从数值背包节点按分离条的数量拆出一个独立节点；最后一件不能拆出。 */
   detachBackpackItem(item) {
     if (!item?.backpackItemOwner || item.detached || item.quantity <= 1) return null;
     const amount = Math.max(1, Math.min(item.splitAmount || 1, item.quantity - 1));
-    item.quantity -= amount;
-    item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, item.quantity - 1));
     const detached = new Node(item.type, item.x, item.y, true);
     detached.quantity = amount;
     detached.detached = true;
@@ -562,6 +577,7 @@ class World {
     detached.scalesWithWorld = true;
     this.backpack.children.push(detached);
     this.uiNodes.push(detached);
+    this.syncBackpackQuantity(item.type);
     return detached;
   }
 
@@ -585,12 +601,7 @@ class World {
     const anchor = item.sourcePile;
     this.backpack.children = this.backpack.children.filter(node => node !== item);
     this.uiNodes = this.uiNodes.filter(node => node !== item);
-    // inventory 才是背包物品的唯一总数；回收时根据仍在外面的拆分节点重算，不能直接 +1。
-    const remainingDetached = this.backpack.children
-      .filter(node => node.type === anchor.type && node.detached)
-      .reduce((sum, node) => sum + node.quantity, 0);
-    anchor.quantity = Math.max(0, (this.inventory[anchor.type] || 0) - remainingDetached);
-    anchor.splitAmount = Math.min(anchor.splitAmount || 1, Math.max(1, anchor.quantity - 1));
+    this.syncBackpackQuantity(anchor.type);
     return true;
   }
 
@@ -684,8 +695,8 @@ class World {
     if (item.detached && item.sourcePile) item.sourcePile.shakeUntil = now + 180;
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
     item.quantity -= 1;
+    this.syncBackpackQuantity(item.type);
     if (item.quantity <= 0) {
-      if (item.detached && item.sourcePile) item.sourcePile.splitAmount = Math.min(item.sourcePile.splitAmount || 1, Math.max(1, item.sourcePile.quantity - 1));
       // 保留最后一件到震动结束，确保被吃掉的独立节点也能显示视觉反馈。
       item.consumedUntil = now + 180;
     }

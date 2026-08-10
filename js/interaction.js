@@ -64,16 +64,34 @@ class Interaction {
   /** 按鼠标在分离条中的水平位置换算本次需要拆出的数量。 */
   updateSplitAmount(node, clientX) {
     const minimum = 1;
-    const maximum = Math.max(minimum, node.quantity - minimum);
+    const maximum = this.splitMaximum(node);
     const ratio = Math.max(0, Math.min(1, (clientX - (node.x + 10)) / 33));
     const value = minimum + ratio * (maximum - minimum);
     node.splitAmount = Math.round(value);
   }
 
+  /** 返回节点本次可拆出的最大整数；资源允许留下小数余量，背包至少保留 1 件。 */
+  splitMaximum(node) {
+    const minimum = 1;
+    return node.resourcePileOwner
+      ? Math.max(minimum, Math.floor(node.quantity + Number.EPSILON))
+      : Math.max(minimum, node.quantity - minimum);
+  }
+
+  /** 将原生输入框的当前值裁剪并同步到节点，但不关闭输入框，供上下箭头连续调整使用。 */
+  previewQuantityInput(node) {
+    const minimum = 1;
+    const maximum = this.splitMaximum(node);
+    const parsed = Number(this.quantityInput.value);
+    const value = Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : minimum;
+    node.splitAmount = Math.round(value);
+    this.quantityInput.value = String(node.splitAmount);
+  }
+
   /** 打开覆盖在节点上的原生输入框，让玩家直接键入要拆出的数值。 */
   openQuantityInput(node) {
     const minimum = 1;
-    const maximum = Math.max(minimum, node.quantity - minimum);
+    const maximum = this.splitMaximum(node);
     this.quantityInputNode = node;
     this.quantityInput.min = String(minimum);
     this.quantityInput.max = String(maximum);
@@ -99,11 +117,7 @@ class Interaction {
   commitQuantityInput(splitImmediately = false) {
     const node = this.quantityInputNode;
     if (!node) return;
-    const minimum = 1;
-    const maximum = Math.max(minimum, node.quantity - minimum);
-    const parsed = Number(this.quantityInput.value);
-    const value = Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, parsed)) : minimum;
-    node.splitAmount = Math.round(value);
+    this.previewQuantityInput(node);
     this.quantityInput.hidden = true;
     this.quantityInputNode = null;
     if (!splitImmediately) return;
@@ -249,7 +263,10 @@ class Interaction {
         this.quantityInput.focus();
       });
     });
-    this.quantityInput.addEventListener("change", () => this.commitQuantityInput());
+    // 点击 number 输入框的上下箭头只预览数值，不能关闭输入框，否则无法连续点击。
+    this.quantityInput.addEventListener("input", () => {
+      if (this.quantityInputNode) this.previewQuantityInput(this.quantityInputNode);
+    });
     this.quantityInput.addEventListener("blur", () => this.commitQuantityInput());
     this.quantityInput.addEventListener("keydown", event => {
       if (event.key === "Enter") { event.preventDefault(); this.commitQuantityInput(true); }

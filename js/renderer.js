@@ -63,7 +63,9 @@ class Renderer {
         ctx.font = "11px Microsoft YaHei";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(String(node.splitAmount || minimum), node.x + 24, node.y + 22);
+        const splitAmount = Number(node.splitAmount || minimum);
+        const splitLabel = Number.isInteger(splitAmount) ? String(splitAmount) : splitAmount.toFixed(1);
+        ctx.fillText(splitLabel, node.x + 24, node.y + 22);
       }
     }
     // 手、嘴的底部耐久条独立于采集进度条；归零后该节点会被隐藏。
