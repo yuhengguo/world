@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, random, resetRandomSequences } = window.TreeWorld;
+const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
 
 /** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
 const spawnCountRange = definition => {
@@ -16,18 +16,6 @@ const spawnCountRange = definition => {
   }
   const count = Math.max(0, Math.floor(configured ?? 1));
   return [count, count];
-};
-
-/** 读取普通子节点的生成数量范围；未配置时保持原有的 3 到 6 个默认值。 */
-const childCountRange = definition => {
-  const configured = definition?.childCount;
-  if (Array.isArray(configured)) {
-    const min = Math.max(0, Math.floor(configured[0] || 0));
-    const max = Math.max(min, Math.floor(configured[1] ?? min));
-    return [min, max];
-  }
-  const count = Math.max(0, Math.floor(configured ?? 3));
-  return configured === undefined ? [3, 6] : [count, count];
 };
 
 class World {
@@ -45,6 +33,8 @@ class World {
 
     // 山是不可被清空的世界根；森林、草地和岩壁等区域都会挂在它下面。
     this.root = new Node("山", width / 2, height / 2);
+    // 生成路径是局部随机流的唯一地址；同一总种子下，每条分支都可独立复现。
+    this.root.generationKey = "world-root";
     this.nodes.push(this.root);
 
     // UI 使用屏幕坐标：初始化在左侧中部，永远不受世界相机缩放影响。
@@ -75,10 +65,17 @@ class World {
     for (let index = 0; index < count; index++) {
       // 隐藏层纵向向上错开，最上方节点最后由树显示在整叠最下端。
       // 每条隐藏链的终点固定为配置中唯一的不可破坏节点。
-      const type = index === count - 1
+      const candidates = HIDDEN_LAYER_TYPES.filter(type => {
+        const definition = NODE_TYPES[type] || {};
+        const chance = definition.spawnChance ?? 1;
+        return createRandomStream(`${owner.generationKey}:underlay:${index}:chance:${type}`).next() < chance;
+      });
+      // 最后一层永远是基岩；若本层没有任何矿物通过概率判定，也提前以基岩封底。
+      const type = index === count - 1 || !candidates.length
         ? FINAL_HIDDEN_LAYER_TYPE
-        : random.pick(HIDDEN_LAYER_TYPES);
+        : createRandomStream(`${owner.generationKey}:underlay:${index}:type`).pick(candidates);
       const layer = new Node(type, owner.x, owner.y - (index + 1) * gap);
+      layer.generationKey = `${owner.generationKey}/underlay:${index}:${type}`;
       layer.visible = false;
       layer.hiddenUnderlay = true;
       layer.locked = true;
@@ -86,12 +83,18 @@ class World {
       layer.replacementLayer = true;
       parent.underlays = [layer];
       parent = layer;
+      if (type === FINAL_HIDDEN_LAYER_TYPE) break;
     }
+  }
+
+  /** 返回替补 pile 中紧挨着 node 的下一层；普通 children 不参与这条链。 */
+  nextReplacement(node) {
+    return node?.underlays[0] || null;
   }
 
   /**
    * 用 replacement 接替 node 在所有父节点中的位置。
-   * 这是“替补 pile”的唯一入口：替补节点继承上层节点的父级连接，而不是成为它的普通子节点。
+   * 这是替补 pile 的连接核心：替补节点继承上层节点的父级连线，而不是成为普通子节点。
    */
   replaceInParents(node, replacement) {
     const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
@@ -112,11 +115,11 @@ class World {
   }
 
   /**
-   * 仅揭示所属节点的下一层，不会一次把所有隐藏层放进世界。
-   * 被揭示的地下层会接替原节点，继承其父级连接；树、土、矿物都遵循同一规则。
+   * 移除替补 pile 的首层，让其下一层接替到画面和父级连接中。
+   * 树、放置物、土与矿物都可使用本方法，因此“消失后由下一层替补”只有一个实现入口。
    */
-  revealNextUnderlay(node) {
-    const next = node.underlays[0];
+  removeReplacementHead(node) {
+    const next = this.nextReplacement(node);
     if (!next) return null;
     next.visible = true;
     next.hiddenUnderlay = false;
@@ -132,10 +135,25 @@ class World {
   }
 
   /**
-   * 检查一个地层节点及其“替代链”是否能承载放置物。
-   * 显示连接可以把地层提升到森林下，但真实地层顺序始终保留在 underlays 中。
+   * 将 newHead 压入 currentHead 的上方，成为替补 pile 的新首层。
+   * currentHead 不会被删除，只会暂时隐藏，直到 newHead 被移除后再次接替回来。
    */
-  canPlaceOn(node) {
+  pushReplacementHead(currentHead, newHead) {
+    newHead.underlays = [currentHead];
+    newHead.replacementLayer = true;
+    currentHead.visible = false;
+    currentHead.hiddenUnderlay = true;
+    currentHead.locked = true;
+    if (!this.nodes.includes(newHead)) this.nodes.push(newHead);
+    this.replaceInParents(currentHead, newHead);
+    return newHead;
+  }
+
+  /**
+   * 检查替补 pile 是否是一条通向基岩、且中间全为地质节点的有效承载链。
+   * 显示父子线可以变化，但这里始终只沿 underlays 读取真实的替补顺序。
+   */
+  hasValidGroundChain(node) {
     const visited = new Set();
     let current = node;
     while (current && !visited.has(current)) {
@@ -143,7 +161,7 @@ class World {
       const definition = NODE_TYPES[current.type] || {};
       if (!definition.groundLayer) return false;
       if (current.type === FINAL_HIDDEN_LAYER_TYPE) return true;
-      current = current.underlays[0] || null;
+      current = this.nextReplacement(current);
     }
     return false;
   }
@@ -155,21 +173,15 @@ class World {
   placeBackpackItem(item, groundNode) {
     // 最后一件背包物品无法再“拆出”，但可以整层作为待放置物；底部生命、饥饿、专注资源仍不走此逻辑。
     if (!item?.backpackItemOwner || item.quantity < 1) return { placed: false, reason: "需要先拿起一个背包物品。" };
-    if (!this.canPlaceOn(groundNode)) return { placed: false, reason: "这里下方必须是一条通向基岩的纯矿物地层。" };
+    if (!this.hasValidGroundChain(groundNode)) return { placed: false, reason: "这里下方必须是一条通向基岩的纯矿物地层。" };
     // 曾经展开过的矿层保留其内部子节点数据，但只要当前已收起，就可作为完整替补层被覆盖。
     // 这样放置物移除后，原矿层仍能按原来的展开状态继续被探索。
     if (groundNode.open) return { placed: false, reason: "请先收起当前展开的地层。" };
 
     const placed = new Node(item.type, groundNode.x, groundNode.y);
     placed.placedInWorld = true;
-    placed.replacementLayer = true;
-    // 放置物成为替补 pile 的新首层，原地层则成为它的下一层，而非普通子节点。
-    placed.underlays = [groundNode];
-    groundNode.visible = false;
-    groundNode.hiddenUnderlay = true;
-    groundNode.locked = true;
-    this.nodes.push(placed);
-    this.replaceInParents(groundNode, placed);
+    // 放置物成为替补 pile 的新首层，原地层则作为下一层等待再次接替。
+    this.pushReplacementHead(groundNode, placed);
 
     // inventory 是背包总数的唯一来源；放置一件后先扣总数，再依照外部拆分数量回算原 pile。
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
@@ -215,10 +227,10 @@ class World {
   }
 
   /** 在不与可见节点重叠的位置生成子节点。 */
-  findPosition(parent) {
+  findPosition(parent, stream) {
     for (let radius = 150; radius < 700; radius += 80) {
       for (let i = 0; i < 50; i++) {
-        const angle = random.next() * Math.PI * 2;
+        const angle = stream.next() * Math.PI * 2;
         const x = parent.x + Math.cos(angle) * radius;
         const y = parent.y + Math.sin(angle) * radius;
         // 动态生物不会改变静态节点的生成位置，否则鸟在不同时间飞到哪里会间接扰乱同一种子的世界布局。
@@ -231,10 +243,14 @@ class World {
 
   /** 创建并接入一个世界子节点；树在这里获得各自独立的地下隐藏层。 */
   createWorldChild(parent, type) {
-    const position = this.findPosition(parent);
+    const sameTypeIndex = parent.children.filter(child => child.type === type).length;
+    const parentKey = parent.generationKey || parent.type;
+    const generationKey = `${parentKey}/${type}:${sameTypeIndex}`;
+    const position = this.findPosition(parent, createRandomStream(`${generationKey}:position`));
     const child = new Node(type, position.x, position.y);
+    child.generationKey = generationKey;
     if (type === "树") {
-      child.soilLayerCount = random.integer(3, 6);
+      child.soilLayerCount = createRandomStream(`${generationKey}:underlay-count`).integer(3, 6);
       this.createHiddenSoilChain(child, child.soilLayerCount);
     }
     parent.children.push(child);
@@ -247,14 +263,7 @@ class World {
   expand(node) {
     const structuralChildren = node.children.filter(child => !child.dynamic);
     if (structuralChildren.length) {
-      // 兼容旧存档：必定出现的概率节点会补齐到 spawnCount 设定的最小数量。
-      (rules[node.type] || []).filter(type => NODE_TYPES[type]?.spawnChance >= 1).forEach(type => {
-        const [minimum] = spawnCountRange(NODE_TYPES[type]);
-        const missing = Math.max(0, minimum - node.children.filter(child => child.type === type).length);
-        for (let index = 0; index < missing; index++) {
-          this.createWorldChild(node, type);
-        }
-      });
+      // 已生成过的节点只恢复原有展开结构；概率只会在第一次展开时结算一次。
       node.open = true;
       this.showOpenDescendants(node);
       return [];
@@ -263,29 +272,27 @@ class World {
     if (!available.length) return [];
 
     const created = [];
-    const [minimumChildren, maximumChildren] = childCountRange(NODE_TYPES[node.type]);
-    const count = random.integer(minimumChildren, maximumChildren);
-    // 概率子节点按“本次展开是否出现”判定；出现后按 spawnCount 生成多个同类型节点。
-    const specialChildren = available.flatMap(type => {
-      const definition = NODE_TYPES[type];
-      if (definition?.spawnChance === undefined || random.next() >= definition.spawnChance) return [];
-      // 已迁徙进来的同类动态节点会随这棵未展开树保留，不再额外重复生成同类节点。
-      if (node.children.some(child => child.dynamic && child.type === type)) return [];
-      const [minimum, maximum] = spawnCountRange(definition);
-      return Array.from({ length: random.integer(minimum, maximum) }, () => type);
+    // 每一种候选子节点都有独立随机流：调整“花”的概率，不会改变“树枝”或其他树的结果。
+    const candidates = available.filter(type => {
+      const definition = NODE_TYPES[type] || {};
+      const chance = definition.spawnChance ?? 1;
+      const alreadyMigrated = definition.dynamic && node.children.some(child => child.dynamic && child.type === type);
+      return !alreadyMigrated && createRandomStream(`${node.generationKey}:spawn:${type}:chance`).next() < chance;
     });
-    const regularChildren = available.filter(type => NODE_TYPES[type]?.spawnChance === undefined);
-    // 概率节点数量可能占满本轮名额（例如 3 只鸟与最小 3 个子节点）。
-    // 只要该父节点存在普通子节点，就至少保留一个，避免静态树只剩鸟后被规则立即清理并错误露出地下层。
-    const regularCount = Math.max(regularChildren.length ? 1 : 0, count - specialChildren.length);
-    const totalCount = specialChildren.length + regularCount;
-    for (let i = 0; i < totalCount; i++) {
-      // 先生成本轮已掷中的特殊节点，其余名额由普通子节点填充。
-      const type = i < specialChildren.length
-        ? specialChildren[i]
-        : random.pick(regularChildren);
-      created.push(this.createWorldChild(node, type));
+    const staticTypes = available.filter(type => !NODE_TYPES[type]?.dynamic);
+    const generatedTypes = candidates.flatMap(type => {
+      const [minimum, maximum] = spawnCountRange(NODE_TYPES[type]);
+      const amount = createRandomStream(`${node.generationKey}:spawn:${type}:count`).integer(minimum, maximum);
+      return Array.from({ length: amount }, () => type);
+    });
+    // 树至少拥有一个静态子节点，避免只剩鸟时触发“静态父节点不能仅留动态子节点”的清理规则。
+    const minimumStatic = NODE_TYPES[node.type]?.minimumStaticChildren ?? 0;
+    while (generatedTypes.filter(type => !NODE_TYPES[type]?.dynamic).length < minimumStatic && staticTypes.length) {
+      const index = generatedTypes.filter(type => !NODE_TYPES[type]?.dynamic).length;
+      generatedTypes.push(createRandomStream(`${node.generationKey}:static-fallback:${index}`).pick(staticTypes));
     }
+    // spawnCount 是节点出现后的唯一数量来源；不再使用父节点的“凑数量”逻辑重复生成同一种节点。
+    generatedTypes.forEach(type => created.push(this.createWorldChild(node, type)));
     node.open = true;
     // 首次展开时若已暂存迁徙鸟，也要与新生成的树枝、树干一同显示。
     node.children.forEach(child => child.visible = true);
@@ -590,7 +597,7 @@ class World {
   /** 删除采集完成的节点；父节点空了会递归消失并揭示下一隐藏层。 */
   removeNodeAndEmptyParents(node) {
     const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
-    const revealed = this.revealNextUnderlay(node);
+    const revealed = this.removeReplacementHead(node);
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
 

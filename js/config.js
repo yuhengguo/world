@@ -50,6 +50,22 @@
   // 动态节点使用由同一主种子派生出的独立序列，避免鸟的转向时机影响树、矿物等世界生成结果。
   const dynamicRandom = new SeededRandom(RANDOM_SEED ^ 0x9E3779B9);
 
+  /** 将节点路径和用途稳定地映射为 32 位种子，供每个生成分支拥有自己的局部随机流。 */
+  const hashRandomKey = key => {
+    let hash = 2166136261;
+    for (const character of String(key)) {
+      hash ^= character.codePointAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  };
+
+  /**
+   * 从唯一的 RANDOM_SEED 派生局部随机流。
+   * 同一节点路径、同一用途总会得到同一串结果，调节其它分支的概率不会扰乱这里。
+   */
+  const createRandomStream = key => new SeededRandom(RANDOM_SEED ^ hashRandomKey(key));
+
   /** 新开一局时同步复位全部随机序列；种子只需要在本文件顶部修改一次。 */
   const resetRandomSequences = () => {
     random.reset(RANDOM_SEED);
@@ -59,46 +75,48 @@
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
   const NODE_TYPES = {
-    // childCount 控制一次展开时生成的普通子节点数量范围（含两端）。
-    山: { emoji: "⛰️", children: ["森林"], childCount: [1, 1], sound: "mountain.wav", volume: .75 },
+    // spawnChance 控制该类型出现的概率；spawnCount 控制出现后生成的数量范围（含两端）。
+    山: { emoji: "⛰️", children: ["森林"], spawnChance: 1, spawnCount: [1, 1], sound: "mountain.wav", volume: .75 },
     // 森林生成多棵独立的树；每棵树都会带有自己的地下层、鸟与采集分支。
-    森林: { emoji: "🌳🌳", children: ["树"], childCount: [4, 6], sound: "forest.wav", volume: .7 },
-    树: { emoji: "🌳", children: ["树枝", "树干", "鸟"], sound: "tree.wav", volume: .7 },
-    树枝: { emoji: "🌿", children: ["花", "种子"], sound: "branch.wav", volume: .7 },
-    树干: { emoji: "🪵🪵", children: ["原木"], sound: "trunk.wav", volume: .7 },
-    原木: { emoji: "🪵", children: [], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
-    花: { emoji: "🌸", children: [], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
-    种子: { emoji: "🌰", children: [], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
+    森林: { emoji: "🌳🌳", children: ["树", "蘑菇"], spawnChance: 1, spawnCount: [1, 1], sound: "forest.wav", volume: .7 },
+    树: { emoji: "🌳", children: ["树枝", "树干", "鸟"], minimumStaticChildren: 1, spawnChance: 1, spawnCount: [4, 6], sound: "tree.wav", volume: .7 },
+    树枝: { emoji: "🌿", children: ["花", "种子"], spawnChance: 1, spawnCount: [1, 1], sound: "branch.wav", volume: .7 },
+    树干: { emoji: "🪵🪵", children: ["原木"], spawnChance: 1, spawnCount: [1, 1], sound: "trunk.wav", volume: .7 },
+    原木: { emoji: "🪵", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
+    花: { emoji: "🌸", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
+    种子: { emoji: "🌰", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
+    蘑菇: { emoji: "🍄", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
+
     // 动态节点示例：spawnChance 是每次展开树时出现鸟群的概率；spawnCount 是出现后鸟的随机数量范围（含两端）。
     // 例如改成 spawnChance: .5, spawnCount: [1, 4]，表示有 50% 概率出现 1 到 4 只鸟。
     鸟: { emoji: "🐦", children: [], spawnChance: 1, spawnCount: [1, 3], dynamic: { speed: 420, turnInterval: [650, 1500] }, harvestClicks: 4, harvestHungerCost: .3, harvestWear: .8, edible: true, hungerRestore: 3, eatWear: 1, sound: "bird.wav", volume: .65 },
 
     // 这些节点可能出现在土块下方的隐藏层；每种都可单独替换音频与音量。
-    土: { emoji: "🟫", children: ["土块"], hiddenLayer: true, groundLayer: true, sound: "soil.wav", volume: .6 },
+    土: { emoji: "🟫", children: ["土块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "soil.wav", volume: .6 },
     土块: {
-      emoji: "🟤", children: [], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .7,
+      emoji: "🟤", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .7,
       sound: "dirt-block.wav", // 文件路径：sounds/dirt-block.wav
       volume: .65 // 音量：65%。正确参数名是 volume，不是 volumn。
     },
-    铁矿: { emoji: "⚙️", children: ["铁块"], hiddenLayer: true, groundLayer: true, sound: "iron-ore.wav", volume: .65 },
-    铁块: { emoji: "🔩", children: [], harvestClicks: 5, harvestHungerCost: .4, harvestWear: 1.1, sound: "iron-ingot.wav", volume: .7 },
-    铜矿: { emoji: "🟠", children: ["铜块"], hiddenLayer: true, groundLayer: true, sound: "copper-ore.wav", volume: .65 },
-    铜块: { emoji: "🟤", children: [], harvestClicks: 4, harvestHungerCost: .3, harvestWear: .9, sound: "copper-ingot.wav", volume: .7 },
-    金矿: { emoji: "🟡", children: ["金块"], hiddenLayer: true, groundLayer: true, sound: "gold-ore.wav", volume: .65 },
-    金块: { emoji: "🟨", children: [], harvestClicks: 7, harvestHungerCost: .6, harvestWear: 1.5, sound: "gold-ingot.wav", volume: .75 },
-    钻石: { emoji: "💎", children: ["钻石块"], hiddenLayer: true, groundLayer: true, sound: "diamond-ore.wav", volume: .7 },
-    钻石块: { emoji: "🔷", children: [], harvestClicks: 10, harvestHungerCost: .8, harvestWear: 2, sound: "diamond.wav", volume: .8 },
-    基岩: { emoji: "🪨", children: [], groundLayer: true, indestructible: true, sound: "bedrock.wav", volume: .7 },
+    铁矿: { emoji: "⚙️", children: ["铁块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "iron-ore.wav", volume: .65 },
+    铁块: { emoji: "🔩", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 5, harvestHungerCost: .4, harvestWear: 1.1, sound: "iron-ingot.wav", volume: .7 },
+    铜矿: { emoji: "🟠", children: ["铜块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "copper-ore.wav", volume: .65 },
+    铜块: { emoji: "🟤", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 4, harvestHungerCost: .3, harvestWear: .9, sound: "copper-ingot.wav", volume: .7 },
+    金矿: { emoji: "🟡", children: ["金块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "gold-ore.wav", volume: .65 },
+    金块: { emoji: "🟨", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 7, harvestHungerCost: .6, harvestWear: 1.5, sound: "gold-ingot.wav", volume: .75 },
+    钻石: { emoji: "💎", children: ["钻石块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "diamond-ore.wav", volume: .7 },
+    钻石块: { emoji: "🔷", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 10, harvestHungerCost: .8, harvestWear: 2, sound: "diamond.wav", volume: .8 },
+    基岩: { emoji: "🪨", children: [], spawnChance: 1, spawnCount: [1, 1], groundLayer: true, indestructible: true, sound: "bedrock.wav", volume: .7 },
 
-    身体: { emoji: "🧍", children: ["手", "嘴"], sound: "body.wav", volume: .7 },
-    手: { emoji: "✋", children: [], durability: 100, durabilityRecovery: .5, defaultHarvestWear: 1, sound: "hand.wav", volume: .65 },
-    嘴: { emoji: "👄", children: [], durability: 100, durabilityRecovery: .5, defaultEatWear: 1, sound: "mouth.wav", volume: .65 },
-    背包: { emoji: "🎒", children: [], sound: "backpack.wav", volume: .7 },
-    思考: { emoji: "💡", children: [], sound: "thought.wav", volume: .6 },
-    刷新: { emoji: "🔄", children: [], sound: "refresh.wav", volume: .6 },
-    饥饿: { emoji: "🍖", children: [], sound: "hunger.wav", volume: .55 },
-    生命: { emoji: "❤️", children: [], sound: "life.wav", volume: .55 },
-    专注: { emoji: "🎯", children: [], sound: "focus.wav", volume: .55 }
+    身体: { emoji: "🧍", children: ["手", "嘴"], spawnChance: 1, spawnCount: [1, 1], sound: "body.wav", volume: .7 },
+    手: { emoji: "✋", children: [], spawnChance: 1, spawnCount: [1, 1], durability: 100, durabilityRecovery: .5, defaultHarvestWear: 1, sound: "hand.wav", volume: .65 },
+    嘴: { emoji: "👄", children: [], spawnChance: 1, spawnCount: [1, 1], durability: 100, durabilityRecovery: .5, defaultEatWear: 1, sound: "mouth.wav", volume: .65 },
+    背包: { emoji: "🎒", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "backpack.wav", volume: .7 },
+    思考: { emoji: "💡", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "thought.wav", volume: .6 },
+    刷新: { emoji: "🔄", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "refresh.wav", volume: .6 },
+    饥饿: { emoji: "🍖", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "hunger.wav", volume: .55 },
+    生命: { emoji: "❤️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "life.wav", volume: .55 },
+    专注: { emoji: "🎯", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "focus.wav", volume: .55 }
   };
 
   // 面向玩家的节点说明。新增节点时在这里补一条，即可显示在右侧详情页。
@@ -159,7 +177,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, resetRandomSequences, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();
