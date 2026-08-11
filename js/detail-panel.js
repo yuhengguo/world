@@ -101,7 +101,7 @@ class DetailPanel {
     const node = selectedNode || this.lastNode;
     if (!node) return;
     this.emoji.textContent = emoji[node.type] || "?";
-    this.name.textContent = node.type;
+    this.name.textContent = node.customNode ? node.customLabel : node.type;
     this.kind.textContent = selectedNode ? "当前选中" : "最近查看";
     this.description.textContent = this.descriptionFor(node);
     this.facts.replaceChildren(...this.factsFor(node).map(([label, value]) => {

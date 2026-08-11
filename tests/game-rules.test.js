@@ -13,7 +13,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const projectRoot = path.resolve(__dirname, "..");
-const logicFiles = ["config.js", "node.js", "world.js", "dynamic.js", "time.js", "celestial.js"];
+const logicFiles = ["config.js", "node.js", "world.js", "dynamic.js", "time.js", "celestial.js", "workspace-panel.js"];
 
 /** 在隔离上下文中加载游戏逻辑，确保每条测试都从全新的随机种子和世界状态开始。 */
 function loadGame() {
@@ -194,6 +194,181 @@ test("背包拆分并归位不会凭空增加物品数量", () => {
   assert.equal(world.inventory.原木, 3);
 });
 
+test("自定义分类树在关闭背包后保留，物品可归类并在删除分类时逐级上移", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.原木 = 2;
+  world.setBackpackOpen(true, 1000);
+  const first = world.createCustomBackpackNode(world.backpack, 1000);
+  first.customLabel = "木材";
+  const second = world.createCustomBackpackNode(first, 1000);
+  second.customLabel = "备用";
+  const pile = world.allBackpackItems().find(item => item.type === "原木");
+  assert.equal(world.moveBackpackItemToCustom(pile, second, 1000).moved, true);
+  world.setBackpackOpen(false, 1000);
+  world.setBackpackOpen(true, 1000);
+  const restored = world.allBackpackItems().find(item => item.type === "原木");
+  assert.equal(restored.backpackParent, second);
+  world.removeNewestCustomBackpackNode(first, 1000);
+  assert.equal(world.backpackItemGroups.原木, first.customId);
+  world.removeNewestCustomBackpackNode(world.backpack, 1000);
+  assert.equal(world.backpackItemGroups.原木, null);
+});
+
+test("每层自定义分类数量受 config 上限控制，且分类节点不跟随世界缩放", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.setBackpackOpen(true, 1000);
+  const limit = game.BACKPACK_CUSTOM_CONFIG.maxChildrenPerLayer;
+  const created = Array.from({ length: limit + 1 }, () => world.createCustomBackpackNode(world.backpack, 1000));
+  assert.equal(created.filter(Boolean).length, limit);
+  assert.equal(created.at(-1), null);
+  assert.equal(created[0].scalesWithWorld, false);
+});
+
+test("拆分物归入分类时只移动自身，不会把原始 pile 一同归类", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.原木 = 3;
+  world.setBackpackOpen(true, 1000);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "原木" && !item.detached);
+  pile.splitAmount = 1;
+  const detached = world.detachBackpackItem(pile);
+  assert.equal(world.moveDetachedBackpackItemToCustom(detached, category, 1000).moved, true);
+  assert.equal(detached.backpackParent, category);
+  assert.equal(pile.backpackParent, world.backpack);
+  assert.equal(pile.quantity, 2);
+  assert.notEqual(world.backpackItemGroups.原木, category.customId);
+});
+
+test("归类后的拆分物取消来源关系，剩余 pile 进入同一分类后自动合并", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.原木 = 3;
+  world.setBackpackOpen(true, 1000);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "原木" && !item.detached);
+  pile.splitAmount = 1;
+  const detached = world.detachBackpackItem(pile);
+  world.moveDetachedBackpackItemToCustom(detached, category, 1000);
+  assert.equal(detached.sourcePile, null);
+  assert.equal(world.moveBackpackItemToCustom(pile, category, 1000).moved, true);
+  const merged = world.allBackpackItems().filter(item => item.type === "原木");
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].quantity, 3);
+  assert.equal(merged[0].backpackParent, category);
+});
+
+test("同类拆分物可留在分类一，剩余 pile 仍可进入分类二且两边数量都保留", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 3;
+  world.inventory.花 = 1;
+  world.setBackpackOpen(true, 1000);
+  const first = world.createCustomBackpackNode(world.backpack, 1000);
+  const second = world.createCustomBackpackNode(world.backpack, 1000);
+  const seedPile = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  seedPile.splitAmount = 1;
+  const seedPart = world.detachBackpackItem(seedPile);
+  world.moveDetachedBackpackItemToCustom(seedPart, first, 1000);
+  const flowerPile = world.allBackpackItems().find(item => item.type === "花" && !item.detached);
+  assert.equal(world.moveBackpackItemToCustom(flowerPile, second, 1000).moved, true);
+  const remainingSeed = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  assert.equal(world.moveBackpackItemToCustom(remainingSeed, second, 1000).moved, true);
+  const seedNodes = world.allBackpackItems().filter(item => item.type === "种子");
+  assert.equal(seedNodes.find(item => item.detached).backpackParent, first);
+  assert.equal(seedNodes.find(item => !item.detached).backpackParent, second);
+  assert.equal(seedNodes.find(item => item.detached).quantity, 1);
+  assert.equal(seedNodes.find(item => !item.detached).quantity, 2);
+  world.setBackpackOpen(false, 1000);
+  world.setBackpackOpen(true, 1000);
+  const restoredSeeds = world.allBackpackItems().filter(item => item.type === "种子");
+  assert.equal(restoredSeeds.find(item => item.detached).backpackParent, first);
+  assert.equal(restoredSeeds.find(item => !item.detached).backpackParent, second);
+});
+
+test("分类中的完整 pile 可以移回背包根节点", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.花 = 1;
+  world.setBackpackOpen(true, 1000);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "花");
+  world.moveBackpackItemToCustom(pile, category, 1000);
+  const grouped = world.allBackpackItems().find(item => item.type === "花");
+  assert.equal(world.moveBackpackItemToCustom(grouped, world.backpack, 1000).moved, true);
+  assert.equal(world.allBackpackItems().find(item => item.type === "花").backpackParent, world.backpack);
+});
+
+test("拆分到最后一件时，该完整单件仍可进入另一个分类", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 2;
+  world.setBackpackOpen(true, 1000);
+  const first = world.createCustomBackpackNode(world.backpack, 1000);
+  const second = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  const part = world.detachBackpackItem(pile);
+  world.moveDetachedBackpackItemToCustom(part, first, 1000);
+  const lastItem = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  assert.equal(lastItem.quantity, 1);
+  assert.equal(world.moveBackpackItemToCustom(lastItem, second, 1000).moved, true);
+  assert.equal(world.allBackpackItems().find(item => item.type === "种子" && !item.detached).backpackParent, second);
+});
+
+test("分类一的拆分物移入分类二时会与分类二中的同类完整 pile 合并", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 3;
+  world.setBackpackOpen(true, 1000);
+  const first = world.createCustomBackpackNode(world.backpack, 1000);
+  const second = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  pile.splitAmount = 1;
+  const part = world.detachBackpackItem(pile);
+  world.moveDetachedBackpackItemToCustom(part, first, 1000);
+  const remaining = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  world.moveBackpackItemToCustom(remaining, second, 1000);
+  const classifiedPart = world.allBackpackItems().find(item => item.type === "种子" && item.detached);
+  world.moveDetachedBackpackItemToCustom(classifiedPart, second, 1000);
+  const seeds = world.allBackpackItems().filter(item => item.type === "种子");
+  assert.equal(seeds.length, 1);
+  assert.equal(seeds[0].quantity, 3);
+  assert.equal(seeds[0].backpackParent, second);
+});
+
+test("取消分类时其独立拆分物回到背包并与根 pile 合并", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 3;
+  world.setBackpackOpen(true, 1000);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = world.allBackpackItems().find(item => item.type === "种子" && !item.detached);
+  pile.splitAmount = 1;
+  const part = world.detachBackpackItem(pile);
+  world.moveDetachedBackpackItemToCustom(part, category, 1000);
+  world.removeNewestCustomBackpackNode(world.backpack, 1000);
+  const seeds = world.allBackpackItems().filter(item => item.type === "种子");
+  assert.equal(seeds.length, 1);
+  assert.equal(seeds[0].quantity, 3);
+  assert.equal(seeds[0].backpackParent, world.backpack);
+});
+
+test("删除分类导致子分类上移超过每层上限时会被拒绝", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.setBackpackOpen(true, 1000);
+  Array.from({ length: game.BACKPACK_CUSTOM_CONFIG.maxChildrenPerLayer - 1 }, () => world.createCustomBackpackNode(world.backpack, 1000));
+  const parent = world.createCustomBackpackNode(world.backpack, 1000);
+  const nested = world.createCustomBackpackNode(parent, 1000);
+  world.createCustomBackpackNode(parent, 1000);
+  // 根层已有 parent + 4 个分类；删除 parent 后还要上移 nested，结果将超过 5。
+  assert.equal(world.removeNewestCustomBackpackNode(world.backpack, 1000), null);
+  assert.ok(world.lastCustomOperationReason.includes("超过"));
+  assert.ok(world.customBackpackNodes().includes(nested));
+});
+
 test("资源数值可拆出整数部分并保留小数余量，归位后不会产生浮点误差", () => {
   const game = loadGame();
   const world = new game.World(1000, 700);
@@ -305,6 +480,39 @@ test("收起天空会隐藏天体，但游戏时间仍持续推进", () => {
   assert.equal(celestial.sun.visible, false);
   assert.equal(celestial.moon.visible, false);
   assert.ok(clock.nightProgress() > 0);
+});
+
+test("背包工作区可独立开合、调整宽度并限制内容缩放范围", () => {
+  const game = loadGame();
+  const canvas = { width: 1000, height: 700 };
+  const world = new game.World(canvas.width, canvas.height);
+  const panel = new game.WorkspacePanel(canvas, world);
+  assert.equal(panel.open, true);
+  const closeButton = panel.controls().collapse;
+  panel.pointerDown({ clientX: closeButton.x + 5, clientY: closeButton.y + 5 });
+  panel.pointerUp();
+  assert.equal(panel.open, false);
+  const handle = panel.handleBounds();
+  panel.pointerDown({ clientX: handle.x + 5, clientY: handle.y + 5 });
+  panel.pointerUp();
+  assert.equal(panel.open, true);
+  assert.equal(panel.width, panel.minimumWidth());
+  const resizeHandle = panel.handleBounds();
+  panel.pointerDown({ clientX: resizeHandle.x + 5, clientY: resizeHandle.y + 5 });
+  panel.pointerMove({ clientX: canvas.width, clientY: canvas.height / 2 });
+  panel.pointerUp();
+  assert.equal(panel.open, true);
+  assert.equal(panel.width, canvas.width);
+  const collapseResizeHandle = panel.controls().collapse;
+  panel.pointerDown({ clientX: collapseResizeHandle.x + 5, clientY: collapseResizeHandle.y + 5 });
+  panel.pointerMove({ clientX: 0, clientY: canvas.height / 2 });
+  panel.pointerUp();
+  assert.equal(panel.open, true);
+  assert.equal(panel.width, panel.minimumWidth());
+  panel.zoom(-999999);
+  assert.equal(panel.contentScale, game.WORKSPACE_PANEL_CONFIG.maxContentScale);
+  panel.zoom(999999);
+  assert.equal(panel.contentScale, game.WORKSPACE_PANEL_CONFIG.minContentScale);
 });
 
 let failed = 0;

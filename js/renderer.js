@@ -7,11 +7,12 @@
 const { emoji, HARVEST_CLICKS_BY_TYPE, NODE_SIZE } = window.TreeWorld;
 
 class Renderer {
-  constructor(canvas, world, ui) {
+  constructor(canvas, world, ui, workspacePanel = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.world = world;
     this.ui = ui;
+    this.workspacePanel = workspacePanel;
   }
 
   /** 绘制普通节点；采集颤动仅作用于这个节点自身的视觉内容。 */
@@ -37,6 +38,12 @@ class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(emoji[node.type] || "?", node.x, node.y - 4);
+    // 自定义分类显示玩家填写的名称；类型本身仍保留为“自定义”，便于规则与详情页识别。
+    if (node.customNode) {
+      ctx.fillStyle = "#dff4ff";
+      ctx.font = "11px Microsoft YaHei";
+      ctx.fillText(node.customLabel || "未命名分类", node.x, node.y + 19);
+    }
 
     if (node.harvestProgress) {
       ctx.fillStyle = "#555";
@@ -75,10 +82,19 @@ class Renderer {
       ctx.fillStyle = "#ff8a65";
       ctx.fillRect(node.x - 35, node.y + 25, 70 * node.durability / 100, 4);
     }
+    // 背包与每个自定义分类都拥有“添加直接子分类 / 删除最近子分类”两个局部控制按钮。
+    if (node === this.world.backpack || node.customNode) {
+      ctx.fillStyle = "#8bd3ff";
+      ctx.font = "bold 16px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("+", node.x - 34, node.y + 20);
+      ctx.fillText("−", node.x + 34, node.y + 20);
+    }
     if (hovered === node) {
       ctx.fillStyle = "#ddd";
       ctx.font = "14px Microsoft YaHei";
-      ctx.fillText(node.type, node.x, node.y + 48);
+      ctx.fillText(node.customNode ? node.customLabel : node.type, node.x, node.y + 48);
     }
     ctx.restore();
   }
@@ -137,36 +153,93 @@ class Renderer {
    * 绘制背包到库存节点的连接线。
    * 同类物品的重叠节点视为一个 pile，连线只指向这一叠的中心点。
    */
-  drawBackpackLinks() {
+  drawBackpackLinks(pointForNode = node => node, floatingOnly = false) {
     const { ctx, world, ui } = this;
     if (!ui.backpackOpen) return;
-    const piles = new Map();
-    world.backpack.children.filter(item => !item.detached).forEach(item => {
-      const pile = piles.get(item.type) || [];
-      pile.push(item);
-      piles.set(item.type, pile);
-    });
     ctx.strokeStyle = "#777";
-    piles.forEach(pile => {
-      const center = pile.reduce((sum, item) => ({ x: sum.x + item.x, y: sum.y + item.y }), { x: 0, y: 0 });
-      // 所有 pile 连接点统一使用节点堆叠的几何中心。
-      center.x /= pile.length;
-      center.y /= pile.length;
+    // 分类树中的每条父子关系都以一根线表示；普通 pile 与自定义分类使用同一套树结构。
+    const drawTreeLinks = parent => parent.children.forEach(child => {
+      // 根背包下仍有来源 pile 的拆分物只画来源线；已脱离来源的独立份额则应画回背包连线。
+      if (child.detached && !parent.customNode && child.sourcePile) return;
+      if (!parent.visible || !child.visible) return;
+      const crossesWorkspaceBoundary = Boolean(parent.workspaceFloating || child.workspaceFloating);
+      // 普通连线由工作区裁切；只有拖到世界中的物品连线可以越过工作区边框。
+      if (crossesWorkspaceBoundary !== floatingOnly) {
+        if (child.customNode) drawTreeLinks(child);
+        return;
+      }
+      const from = pointForNode(parent);
+      const to = pointForNode(child);
       ctx.beginPath();
-      ctx.moveTo(world.backpack.x, world.backpack.y);
-      ctx.lineTo(center.x, center.y);
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
       ctx.stroke();
+      if (child.customNode) drawTreeLinks(child);
     });
+    drawTreeLinks(world.backpack);
 
     // 已拆出的物品从原 pile 左侧中心引出一条独立连线。
-    world.backpack.children.filter(item => item.detached).forEach(item => {
-      const remaining = world.backpack.children.filter(other => other.type === item.type && !other.detached);
-      const sourceX = remaining.length ? remaining.reduce((sum, other) => sum + other.x, 0) / remaining.length : item.x;
-      const sourceY = remaining.length ? remaining.reduce((sum, other) => sum + other.y, 0) / remaining.length : item.y;
+    world.allBackpackItems().filter(item => item.detached).forEach(item => {
+      if (Boolean(item.workspaceFloating || item.sourcePile?.workspaceFloating) !== floatingOnly) return;
+      const source = item.sourcePile;
+      const sourcePoint = source ? pointForNode(source) : pointForNode(item);
+      const itemPoint = pointForNode(item);
       ctx.beginPath();
-      ctx.moveTo(sourceX, sourceY);
-      ctx.lineTo(item.x, item.y);
+      ctx.moveTo(sourcePoint.x, sourcePoint.y);
+      ctx.lineTo(itemPoint.x, itemPoint.y);
       ctx.stroke();
+    });
+  }
+
+  /** 绘制独立的背包工作区；其中内容使用工作区自己的坐标缩放。 */
+  drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue) {
+    const panel = this.workspacePanel;
+    if (!panel) return;
+    const { ctx, canvas, world } = this;
+    const controls = panel.controls();
+    if (panel.open) {
+      ctx.save();
+      // 使用与世界画布一致的底色遮住下方节点，使工作区清晰独立但不显得突兀。
+      ctx.fillStyle = "#111";
+      ctx.fillRect(0, 0, panel.width, canvas.height);
+      ctx.strokeStyle = "rgba(139, 211, 255, .45)";
+      ctx.beginPath(); ctx.moveTo(panel.width, 0); ctx.lineTo(panel.width, canvas.height); ctx.stroke();
+      // 限制内容不画出面板边界；世界层依旧在面板下方正常显示。
+      ctx.beginPath(); ctx.rect(0, 0, panel.width, canvas.height); ctx.clip();
+      // 普通背包连线也放在裁切区域内，避免缩窄面板后泄漏到世界层。
+      this.drawBackpackLinks(node => panel.displayPoint(node));
+      world.uiNodes
+        .filter(node => panel.isContentNode(node) && !panel.scalesContentNode(node) && !node.workspaceFloating && node.visible)
+        // 入口位置不变，但卡片大小与工作区内容比例统一。
+        .forEach(node => this.drawNode(node, hovered, handActive, now, panel.contentScale, activeBlue, allowMultipleBlue));
+      const anchor = panel.contentAnchor();
+      ctx.translate(anchor.x, anchor.y);
+      ctx.scale(panel.contentScale, panel.contentScale);
+      ctx.translate(-anchor.x, -anchor.y);
+      world.uiNodes
+        .filter(node => panel.scalesContentNode(node) && node.visible)
+        .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+      ctx.restore();
+    }
+    // 只有实际拖到世界中的物品，才允许来源线越过工作区边界。
+    this.drawBackpackLinks(node => panel.displayPoint(node), true);
+    // 被玩家拖出工作区的背包物品改在世界屏幕层绘制，仍通过上方计算过的线连回来源 pile。
+    world.uiNodes
+      .filter(node => panel.isContentNode(node) && node.workspaceFloating && node.visible)
+      .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+    // 开启时 < 与 > 分开绘制；> 同时是可拖动的宽度把手。
+    Object.entries(controls).forEach(([kind, box]) => {
+      ctx.save();
+      ctx.fillStyle = "rgba(37, 69, 88, .9)";
+      ctx.fillRect(box.x, box.y, box.width, box.height);
+      ctx.strokeStyle = "#8bd3ff";
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 20px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(kind === "collapse" ? "<" : ">", box.x + box.width / 2, box.y + box.height / 2);
+      ctx.restore();
     });
   }
 
@@ -263,11 +336,14 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
-    this.drawBackpackLinks();
     this.drawResourceLinks();
     // 天文节点已在背景层画完；这里仅绘制身体、背包等始终位于最前方的普通 UI。
-    world.uiNodes.filter(node => !node.celestialUI).forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
+    world.uiNodes
+      .filter(node => !node.celestialUI && !this.workspacePanel?.isContentNode(node))
+      .forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
     this.drawSelectionBox(selectionBox);
+    // 工作区最后绘制，因此刷新按钮、世界节点与底部 UI 都位于它的下方。
+    this.drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue);
     this.drawGameOver();
   }
 }

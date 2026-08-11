@@ -6,10 +6,131 @@
 const { Interaction } = window.TreeWorld;
 
 Interaction.prototype.hitQuantityBox = function(node, event) {
+  if (this.workspacePanel?.scalesContentNode(node)) {
+    const point = this.workspacePanel.toContent(event);
+    const localX = point.x - node.x;
+    const localY = point.y - node.y;
+    return node.isNumericPile && !node.detached && localX >= 1 && localX <= 48 && localY >= 14 && localY <= 30;
+  }
   const scale = node.scalesWithWorld ? this.camera.scale : 1;
   const localX = (event.clientX - node.x) / scale;
   const localY = (event.clientY - node.y) / scale;
   return node.isNumericPile && !node.detached && localX >= 1 && localX <= 48 && localY >= 14 && localY <= 30;
+};
+
+/** 命中背包/分类节点底部的 + 或 − 控制；它们是节点局部按钮，不是可拖动的独立节点。 */
+Interaction.prototype.hitCustomControl = function(node, event) {
+  if (node !== this.world.backpack && !node.customNode) return null;
+  if (this.workspacePanel?.scalesContentNode(node)) {
+    const point = this.workspacePanel.toContent(event);
+    const localX = point.x - node.x;
+    const localY = point.y - node.y;
+    if (localY < 8 || localY > 30) return null;
+    if (localX >= -46 && localX <= -22) return "add";
+    if (localX >= 22 && localX <= 46) return "remove";
+    return null;
+  }
+  if (this.workspacePanel?.isContentNode(node)) {
+    // 固定入口不移动，但它本身仍随工作区缩放，因此命中局部按钮时要反算卡片缩放。
+    const scale = this.workspacePanel.contentScale;
+    const localX = (event.clientX - node.x) / scale;
+    const localY = (event.clientY - node.y) / scale;
+    if (localY < 8 || localY > 30) return null;
+    if (localX >= -46 && localX <= -22) return "add";
+    if (localX >= 22 && localX <= 46) return "remove";
+    return null;
+  }
+  const scale = node.scalesWithWorld ? this.camera.scale : 1;
+  const localX = (event.clientX - node.x) / scale;
+  const localY = (event.clientY - node.y) / scale;
+  if (localY < 8 || localY > 30) return null;
+  if (localX >= -46 && localX <= -22) return "add";
+  if (localX >= 22 && localX <= 46) return "remove";
+  return null;
+};
+
+/** 执行分类节点的新增/删除，并把焦点留在刚刚操作的分类上。 */
+Interaction.prototype.handleCustomControl = function(node, action) {
+  const changed = action === "add"
+    ? this.world.createCustomBackpackNode(node, this.canvas.width)
+    : this.world.removeNewestCustomBackpackNode(node, this.canvas.width);
+  this.world.uiNodes.forEach(item => item.selected = false);
+  if (action === "add" && changed) {
+    changed.selected = true;
+    this.ui.setStatus(`已在${node.customNode ? node.customLabel : "背包"}下创建 ${changed.customLabel}。`);
+  } else if (action === "add") {
+    node.selected = true;
+    this.ui.setStatus(`每层最多只能创建 ${window.TreeWorld.BACKPACK_CUSTOM_CONFIG.maxChildrenPerLayer} 个自定义分类。`);
+  } else if (changed) {
+    node.selected = true;
+    this.ui.setStatus(`已移除 ${changed.customLabel}，其中的内容已上移。`);
+  } else {
+    node.selected = true;
+    this.ui.setStatus(this.world.lastCustomOperationReason || "这里还没有可移除的下级分类。");
+    this.world.lastCustomOperationReason = "";
+  }
+};
+
+/** 返回当前光标位置命中的可见自定义分类，用于普通选中与“黏附物品归类”共用。 */
+Interaction.prototype.customNodeAt = function(event) {
+  return [...this.world.uiNodes].reverse().find(node => node.customNode && node.visible && this.hit(node, event)) || null;
+};
+
+/** 背包根节点与自定义分类都可作为归类目标；用于物品已经黏附在光标上的情况。 */
+Interaction.prototype.backpackGroupTargetAt = function(event) {
+  const custom = this.customNodeAt(event);
+  if (custom) return custom;
+  return this.world.backpack.visible && this.hit(this.world.backpack, event) ? this.world.backpack : null;
+};
+
+/** 将当前黏附的拆分物归入分类；整叠归类只允许通过“选中 pile + Ctrl 点击分类”。 */
+Interaction.prototype.groupCarriedDetachedItem = function(item, target) {
+  const result = this.world.moveDetachedBackpackItemToCustom(item, target, this.canvas.width);
+  this.carriedUIItem = null;
+  this.carriedUIOrigin = null;
+  this.world.uiNodes.forEach(node => node.selected = false);
+  target.selected = true;
+  this.ui.setStatus(result.moved ? `已将拆分出的 ${item.type} ×${item.quantity} 归入 ${target.customLabel || "背包"}。` : `无法归类：${result.reason}`);
+  return result.moved;
+};
+
+/** Ctrl 点击分类：有已选完整 pile 时归类；否则改名。普通点击则展开或收起该分类。 */
+Interaction.prototype.handleCustomNodeClick = function(node, event) {
+  if (event.ctrlKey) {
+    const selectedItem = this.world.allBackpackItems().find(item => item.selected && !item.detached);
+    if (selectedItem) {
+      const result = this.world.moveBackpackItemToCustom(selectedItem, node, this.canvas.width);
+      this.world.uiNodes.forEach(item => item.selected = false);
+      node.selected = true;
+      this.ui.setStatus(result.moved ? `已将 ${selectedItem.type} 归入 ${node.customLabel}。` : `无法归类：${result.reason}`);
+      return;
+    }
+    const entered = window.prompt("为这个自定义节点命名：", node.customLabel || "未命名分类");
+    if (entered === null) return;
+    const label = entered.trim();
+    if (!label) { this.ui.setStatus("名称不能为空，已保留原名称。"); return; }
+    node.customLabel = label;
+    this.world.uiNodes.forEach(item => item.selected = false);
+    node.selected = true;
+    this.ui.setStatus(`已将分类命名为“${label}”。`);
+    return;
+  }
+  node.open = !node.open;
+  this.world.layoutBackpackTree(this.canvas.width);
+  this.world.uiNodes.forEach(item => item.selected = item === node);
+  this.ui.setStatus(node.open ? `${node.customLabel} 已展开。` : `${node.customLabel} 已收起。`);
+};
+
+/** Ctrl 点击背包本体：把已选完整 pile 直接移回背包根节点。 */
+Interaction.prototype.handleBackpackRootGrouping = function(event) {
+  if (!event.ctrlKey) return false;
+  const selectedItem = this.world.allBackpackItems().find(item => item.selected && !item.detached);
+  if (!selectedItem) return false;
+  const result = this.world.moveBackpackItemToCustom(selectedItem, this.world.backpack, this.canvas.width);
+  this.world.uiNodes.forEach(item => item.selected = false);
+  this.world.backpack.selected = true;
+  this.ui.setStatus(result.moved ? `已将 ${selectedItem.type} 移回背包根节点。` : `无法移动：${result.reason}`);
+  return true;
 };
 
 Interaction.prototype.splitMaximum = function(node) {
@@ -31,6 +152,16 @@ Interaction.prototype.openQuantityInput = function(node) {
   this.quantityInput.max = String(this.splitMaximum(node));
   this.quantityInput.step = "1";
   this.quantityInput.value = String(node.splitAmount || 1);
+  if (this.workspacePanel?.scalesContentNode(node)) {
+    const screen = this.workspacePanel.toScreen(node);
+    this.quantityInput.style.left = `${screen.x + this.workspacePanel.contentScale}px`;
+    this.quantityInput.style.top = `${screen.y + 14 * this.workspacePanel.contentScale}px`;
+    this.quantityInput.style.transformOrigin = "top left";
+    this.quantityInput.style.transform = `scale(${this.workspacePanel.contentScale})`;
+    this.quantityInput.hidden = false;
+    requestAnimationFrame(() => { this.quantityInput.focus(); this.quantityInput.select(); });
+    return;
+  }
   const scale = node.scalesWithWorld ? this.camera.scale : 1;
   this.quantityInput.style.left = `${node.x + scale}px`;
   this.quantityInput.style.top = `${node.y + 14 * scale}px`;
@@ -49,7 +180,7 @@ Interaction.prototype.commitQuantityInput = function(splitImmediately = false) {
   if (!splitImmediately) return;
   const detached = node.backpackItemOwner ? this.world.detachBackpackItem(node) : this.world.detachResourceItem(node);
   if (!detached) { this.ui.setStatus("当前数量不足，无法继续分离。"); return; }
-  const scale = node.scalesWithWorld ? this.camera.scale : 1;
+  const scale = this.workspacePanel?.scalesContentNode(node) ? 1 : (node.scalesWithWorld ? this.camera.scale : 1);
   detached.x = node.x + 22 * scale;
   detached.y = node.y - 14 * scale;
   this.world.uiNodes.forEach(item => item.selected = false);
@@ -112,6 +243,21 @@ Interaction.prototype.handleUINodeDown = function(event) {
   const node = !this.handActive && !this.mouthActive && [...this.world.uiNodes].reverse().find(item => item.visible && this.hit(item, event));
   if (!node) return false;
   if (["手", "嘴"].includes(node.type)) return false; // 工具模块负责这两个节点。
+  const customControl = this.hitCustomControl(node, event);
+  if (customControl) {
+    this.handleCustomControl(node, customControl);
+    this.skipClickAfterDrag = true;
+    return true;
+  }
+  if (node.customNode) {
+    this.handleCustomNodeClick(node, event);
+    this.skipClickAfterDrag = true;
+    return true;
+  }
+  if (node === this.world.backpack && this.handleBackpackRootGrouping(event)) {
+    this.skipClickAfterDrag = true;
+    return true;
+  }
   if (["身体", "背包", "思考", "刷新", "天空", "太阳", "月亮"].includes(node.type)) {
     this.handleUIClick(node, event);
     this.skipClickAfterDrag = true;
@@ -125,6 +271,13 @@ Interaction.prototype.handleUINodeDown = function(event) {
     return true;
   }
   if (node.backpackItemOwner || node.resourcePileOwner) {
+    // Ctrl 单击完整 pile 只负责选中，为随后 Ctrl 单击分类节点执行“归类”留出明确入口。
+    if (event.ctrlKey && node.backpackItemOwner && !node.detached) {
+      this.world.uiNodes.forEach(item => { item.selected = item === node; item.pileGroupSelected = false; });
+      this.ui.setStatus(`已选中 ${node.type}；按住 Ctrl 点击一个自定义分类即可归入其中。`);
+      this.skipClickAfterDrag = true;
+      return true;
+    }
     this.audio.play(node.type);
     if (node.pileGroupSelected) {
       this.selectedUI = node;
@@ -149,6 +302,21 @@ Interaction.prototype.handleUINodeDown = function(event) {
 Interaction.prototype.handleCarriedUIDown = function(event) {
   if (!this.carriedUIItem) return false;
   const item = this.carriedUIItem;
+  const customTarget = event.ctrlKey ? this.backpackGroupTargetAt(event) : null;
+  if (customTarget && item.backpackItemOwner) {
+    if (item.detached) this.groupCarriedDetachedItem(item, customTarget);
+    else if (item.quantity === 1) {
+      // 最后一件本身就是完整 pile：允许直接归类，避免“拆到最后一件却无法放入分类”。
+      const result = this.world.moveBackpackItemToCustom(item, customTarget, this.canvas.width);
+      this.carriedUIItem = null;
+      this.carriedUIOrigin = null;
+      this.world.uiNodes.forEach(node => node.selected = false);
+      customTarget.selected = true;
+      this.ui.setStatus(result.moved ? `已将最后一件 ${item.type} 归入 ${customTarget.customLabel || "背包"}。` : `无法归类：${result.reason}`);
+    } else this.ui.setStatus("整叠物品请先用 Ctrl 单击选中，再按住 Ctrl 点击分类归入。");
+    this.skipClickAfterDrag = true;
+    return true;
+  }
   if (this.placeKeyHeld && item.backpackItemOwner && (item.detached || item.quantity === 1)) {
     const point = this.worldPosition(event);
     const ground = [...this.world.nodes].reverse().find(node => node.visible && !node.locked && this.hit(node, point));
@@ -170,8 +338,12 @@ Interaction.prototype.handleCarriedUIDown = function(event) {
     this.skipClickAfterDrag = true;
     return true;
   }
-  item.x = event.clientX;
-  item.y = event.clientY;
+  const dropPoint = this.workspacePanel?.open && this.workspacePanel.contains(event) && this.workspacePanel?.isContentNode(item)
+    ? this.workspacePanel.toContent(event)
+    : event;
+  item.x = dropPoint.x ?? dropPoint.clientX;
+  item.y = dropPoint.y ?? dropPoint.clientY;
+  item.workspaceFloating = !(this.workspacePanel?.open && this.workspacePanel.contains(event) && item.backpackItemOwner);
   this.world.returnBackpackItemIfDropped(item) || this.world.returnResourceItemIfDropped(item);
   this.carriedUIItem = null;
   this.carriedUIOrigin = null;
@@ -182,6 +354,19 @@ Interaction.prototype.handleCarriedUIDown = function(event) {
 /** 整叠 pile 已黏附光标时，仅空格加左键才会执行放置，普通左键不会误消耗整叠库存。 */
 Interaction.prototype.handleCarriedBulkPileDown = function(event) {
   if (!this.carriedBulkPile) return false;
+  const customTarget = event.ctrlKey ? this.backpackGroupTargetAt(event) : null;
+  if (customTarget) {
+    // 双击拿起的整叠 pile 已属于明确的“整叠选择”状态，可按原完整 pile 规则归类。
+    const pile = this.carriedBulkPile;
+    const result = this.world.moveBackpackItemToCustom(pile, customTarget, this.canvas.width);
+    this.world.uiNodes.forEach(node => node.selected = false);
+    customTarget.selected = true;
+    this.carriedBulkPile = null;
+    this.carriedBulkPileOrigin = null;
+    this.ui.setStatus(result.moved ? `已将整叠 ${pile.type} 归入 ${customTarget.customLabel || "背包"}。` : `无法归类：${result.reason}`);
+    this.skipClickAfterDrag = true;
+    return true;
+  }
   if (!this.placeKeyHeld) return true;
   const pile = this.carriedBulkPile;
   const point = this.worldPosition(event);
@@ -206,14 +391,22 @@ Interaction.prototype.handleBulkPilePlacementDown = function(event) {
 };
 
 Interaction.prototype.moveCarriedUI = function(event) {
-  if (this.carriedUIItem) { this.carriedUIItem.x = event.clientX; this.carriedUIItem.y = event.clientY; }
+  if (!this.carriedUIItem) return;
+  const inPanel = this.workspacePanel?.open && this.workspacePanel.contains(event);
+  const point = inPanel && this.workspacePanel?.isContentNode(this.carriedUIItem) ? this.workspacePanel.toContent(event) : event;
+  this.carriedUIItem.x = point.x ?? point.clientX;
+  this.carriedUIItem.y = point.y ?? point.clientY;
+  this.carriedUIItem.workspaceFloating = !inPanel && Boolean(this.carriedUIItem.backpackItemOwner);
 };
 
 /** 让整叠背包节点按 UI 屏幕坐标跟随光标，不改变它在背包内的来源锚点。 */
 Interaction.prototype.moveCarriedBulkPile = function(event) {
   if (!this.carriedBulkPile) return;
-  this.carriedBulkPile.x = event.clientX;
-  this.carriedBulkPile.y = event.clientY;
+  const inPanel = this.workspacePanel?.open && this.workspacePanel.contains(event);
+  const point = inPanel && this.workspacePanel?.isContentNode(this.carriedBulkPile) ? this.workspacePanel.toContent(event) : event;
+  this.carriedBulkPile.x = point.x ?? point.clientX;
+  this.carriedBulkPile.y = point.y ?? point.clientY;
+  this.carriedBulkPile.workspaceFloating = !inPanel && Boolean(this.carriedBulkPile.backpackItemOwner);
 };
 
 Interaction.prototype.moveSelectedUIInteraction = function(event) {
@@ -246,9 +439,13 @@ Interaction.prototype.cancelCarriedUI = function(event) {
   if (!this.carriedUIItem) return false;
   event.preventDefault();
   const item = this.carriedUIItem;
-  if (item.backpackItemOwner && item.detached) this.world.mergeBackpackItem(item);
+  if (item.backpackItemOwner && item.detached && item.sourcePile) this.world.mergeBackpackItem(item);
   else if (item.resourcePileOwner && item.detached) this.world.mergeResourceItem(item);
-  else { item.x = this.carriedUIOrigin.x; item.y = this.carriedUIOrigin.y; }
+  else {
+    item.x = this.carriedUIOrigin.x;
+    item.y = this.carriedUIOrigin.y;
+    item.workspaceFloating = false;
+  }
   this.carriedUIItem = null;
   this.carriedUIOrigin = null;
   return true;
@@ -260,6 +457,7 @@ Interaction.prototype.cancelCarriedBulkPile = function(event) {
   event.preventDefault();
   this.carriedBulkPile.x = this.carriedBulkPileOrigin.x;
   this.carriedBulkPile.y = this.carriedBulkPileOrigin.y;
+  this.carriedBulkPile.workspaceFloating = false;
   this.carriedBulkPile.selected = false;
   this.carriedBulkPile.pileGroupSelected = false;
   this.carriedBulkPile = null;
@@ -270,8 +468,9 @@ Interaction.prototype.cancelCarriedBulkPile = function(event) {
 Interaction.prototype.handleDoubleClick = function(event) {
   const item = [...this.world.uiNodes].reverse().find(node => node.backpackItemOwner && node.visible && this.hit(node, event));
   if (item) {
-    const pile = item.detached ? item.sourcePile : item;
-    if (item.detached) this.world.mergeBackpackItem(item);
+    // 已归类的拆分物没有来源 pile；它可被选中，但不会尝试合并到不存在的来源节点。
+    const pile = item.detached && item.sourcePile ? item.sourcePile : item;
+    if (item.detached && item.sourcePile) this.world.mergeBackpackItem(item);
     this.world.uiNodes.forEach(node => {
       node.selected = node === pile;
       node.pileGroupSelected = node === pile;

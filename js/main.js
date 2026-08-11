@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { AudioManager, CelestialSystem, DetailPanel, DynamicNodeController, GameClock, Interaction, Renderer, UI, World } = window.TreeWorld;
+const { AudioManager, CelestialSystem, DetailPanel, DynamicNodeController, GameClock, Interaction, Renderer, UI, WorkspacePanel, World } = window.TreeWorld;
 
 const canvas = document.getElementById("canvas");
 
@@ -16,6 +16,8 @@ function resize() {
 
 resize();
 const world = new World(canvas.width, canvas.height);
+// 左侧工作区管理背包与思考节点，不会影响世界本身的镜头缩放。
+const workspacePanel = new WorkspacePanel(canvas, world);
 const dynamicNodes = new DynamicNodeController(world);
 const gameClock = new GameClock();
 const celestial = new CelestialSystem(world, gameClock, canvas);
@@ -24,8 +26,8 @@ const audio = new AudioManager();
 audio.startBackground();
 // 某些浏览器要求用户手势才能播放声音；首次点击会自动补启背景音乐。
 canvas.addEventListener("pointerdown", () => audio.startBackground(), { once: true });
-const interaction = new Interaction(canvas, world, ui, audio, celestial);
-const renderer = new Renderer(canvas, world, ui);
+const interaction = new Interaction(canvas, world, ui, audio, celestial, workspacePanel);
+const renderer = new Renderer(canvas, world, ui, workspacePanel);
 const detailPanel = new DetailPanel();
 const restartButton = document.getElementById("restartButton");
 
@@ -49,6 +51,7 @@ window.addEventListener("resize", () => {
   // UI 使用屏幕坐标并由用户拖动决定位置；窗口缩放不会重置它们。
   world.positionResourcePiles(canvas.width, canvas.height);
   world.positionSky(canvas.width);
+  workspacePanel.width = Math.min(workspacePanel.width, canvas.width);
 });
 
 /** requestAnimationFrame 驱动 Canvas 持续重绘，以显示颤动与悬停状态。 */

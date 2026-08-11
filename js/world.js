@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
+const { BACKPACK_CUSTOM_CONFIG, FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
 
 /** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
 const spawnCountRange = definition => {
@@ -50,6 +50,12 @@ class World {
     this.body = new Node("身体", width / 2 - 240, height - 75, true);
     this.body.fixedUI = true;
     this.backpack = new Node("背包", 80, height / 2 + 55, true);
+    // 背包分类树独立于 inventory：关闭背包后物品卡片会重建，但自定义节点与归属关系必须永久保留。
+    this.backpackItemGroups = {};
+    // 已归类的拆分物需要跨“关闭/重开背包”保存；每条记录代表一份独立数量与其分类位置。
+    this.backpackDetachedRecords = [];
+    this.nextBackpackDetachedRecordId = 1;
+    this.nextCustomBackpackId = 1;
     this.thought = new Node("思考", this.backpack.x, this.backpack.y - 105, true);
     this.thought.fixedUI = true;
     this.resetNode = new Node("刷新", 70, 55, true);
@@ -267,7 +273,7 @@ class World {
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
     item.quantity -= 1;
     if (item.quantity <= 0) {
-      this.backpack.children = this.backpack.children.filter(nodeItem => nodeItem !== item);
+      this.removeBackpackVisualItem(item);
       this.uiNodes = this.uiNodes.filter(nodeItem => nodeItem !== item);
     }
     this.syncBackpackQuantity(item.type);
@@ -321,7 +327,7 @@ class World {
    */
   placeBackpackPile(item, groundNode) {
     if (!item?.backpackItemOwner || item.detached || item.quantity < 1) return { placed: false, reason: "需要选中背包中的原始 pile。" };
-    if (this.backpack.children.some(node => node !== item && node.type === item.type && node.detached)) {
+    if (this.allBackpackItems().some(node => node !== item && node.type === item.type && node.detached)) {
       return { placed: false, reason: "请先收回同类已拆出的物品，再放置整叠。" };
     }
     if (NODE_TYPES[item.type]?.dynamic) return this.placeDynamicBackpackPile(item, groundNode);
@@ -338,7 +344,7 @@ class World {
     this.pushReplacementHead(groundNode, placed);
 
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - item.quantity);
-    this.backpack.children = this.backpack.children.filter(node => node !== item);
+    this.removeBackpackVisualItem(item);
     this.uiNodes = this.uiNodes.filter(node => node !== item);
     this.syncBackpackQuantity(item.type);
     return { placed: true, node: placed, itemRemaining: false, message: `已将 ${placed.type} ×${placed.quantity} 放入地层最上方。` };
@@ -367,7 +373,7 @@ class World {
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
     item.quantity -= 1;
     if (item.quantity <= 0) {
-      this.backpack.children = this.backpack.children.filter(node => node !== item);
+      this.removeBackpackVisualItem(item);
       this.uiNodes = this.uiNodes.filter(node => node !== item);
     }
     this.syncBackpackQuantity(item.type);
@@ -749,46 +755,253 @@ class World {
     this.moveUI(this.backpack, backpack.x - this.backpack.x, backpack.y - this.backpack.y);
   }
 
+  /** 返回背包自定义分类树中的所有分类节点，顺序与玩家创建顺序一致。 */
+  customBackpackNodes(parent = this.backpack, result = []) {
+    parent.children.filter(child => child.customNode).forEach(child => {
+      result.push(child);
+      this.customBackpackNodes(child, result);
+    });
+    return result;
+  }
+
+  /** 返回背包分类树中所有物品卡片，包括已拆出的独立物品。 */
+  allBackpackItems(parent = this.backpack, result = []) {
+    parent.children.forEach(child => {
+      if (child.customNode) this.allBackpackItems(child, result);
+      else if (child.backpackItemOwner === this.backpack) result.push(child);
+    });
+    return result;
+  }
+
+  /** 根据持久 id 找回自定义分类；找不到时归入背包根节点，避免配置或旧存档导致物品丢失。 */
+  customBackpackContainer(id) {
+    return this.customBackpackNodes().find(node => node.customId === id) || this.backpack;
+  }
+
+  /** 创建一个背包内部分类节点；父级可以是背包本身或任意已有自定义节点。 */
+  createCustomBackpackNode(parent = this.backpack, viewportWidth = Infinity) {
+    const limit = Math.max(1, Number(BACKPACK_CUSTOM_CONFIG.maxChildrenPerLayer) || 5);
+    if (parent.children.filter(child => child.customNode).length >= limit) return null;
+    const node = new Node("自定义", parent.x, parent.y, true);
+    node.customNode = true;
+    node.customId = `custom-${this.nextCustomBackpackId++}`;
+    node.customLabel = `分类 ${this.nextCustomBackpackId - 1}`;
+    node.customParent = parent;
+    node.open = true;
+    // 分类是背包的固定 UI 结构，不随世界相机缩放；其内部物品仍沿用原有的缩放表现。
+    node.scalesWithWorld = false;
+    parent.children.push(node);
+    if (this.backpack.open) this.setBackpackOpen(true, viewportWidth);
+    return node;
+  }
+
+  /** 删除父级最近创建的直接分类，并把其中全部内容（含更深分类）上移给父级。 */
+  removeNewestCustomBackpackNode(parent = this.backpack, viewportWidth = Infinity) {
+    const children = parent.children.filter(child => child.customNode);
+    const node = children.at(-1);
+    if (!node) return null;
+    const limit = Math.max(1, Number(BACKPACK_CUSTOM_CONFIG.maxChildrenPerLayer) || 5);
+    const adoptedCustomCount = node.children.filter(child => child.customNode).length;
+    // 删除分类会把它的直接子分类上移；若上移后超过同层上限，就拒绝删除而不是悄悄突破规则。
+    if (children.length - 1 + adoptedCustomCount > limit) {
+      this.lastCustomOperationReason = `删除后会让这一层超过 ${limit} 个自定义分类。`;
+      return null;
+    }
+    const index = parent.children.indexOf(node);
+    const adopted = [...node.children];
+    // 背包关闭时普通物品卡片并不在树上，仍需通过持久归属表把原本直接位于该分类的物品上移。
+    Object.keys(this.backpackItemGroups).forEach(type => {
+      if (this.backpackItemGroups[type] === node.customId) this.backpackItemGroups[type] = parent.customId || null;
+    });
+    this.backpackDetachedRecords.forEach(record => {
+      if (record.customId === node.customId) record.customId = parent.customId || null;
+    });
+    adopted.forEach(child => {
+      if (child.customNode) child.customParent = parent;
+      if (child.backpackItemOwner === this.backpack) {
+        child.backpackParent = parent;
+        if (!child.detached && this.backpackItemGroups[child.type] === node.customId) {
+          this.backpackItemGroups[child.type] = parent.customId || null;
+        }
+      }
+    });
+    parent.children.splice(index, 1, ...adopted);
+    // 分类消失后，回到同一父级的同类独立份额应立即合并，避免根背包出现无法归位的重复物品。
+    [...new Set(adopted.filter(child => child.backpackItemOwner === this.backpack).map(child => child.type))]
+      .forEach(type => this.mergeGroupedBackpackItemsInContainer(parent, type));
+    node.children = [];
+    node.visible = false;
+    this.uiNodes = this.uiNodes.filter(item => item !== node);
+    if (this.backpack.open) this.setBackpackOpen(true, viewportWidth);
+    return node;
+  }
+
+  /** 将一个完整 pile 移入自定义分类或背包根节点；背包根节点同样是合法的整理目标。 */
+  moveBackpackItemToCustom(item, customNode, viewportWidth = Infinity) {
+    if (!item?.backpackItemOwner || item.detached || (!customNode?.customNode && customNode !== this.backpack)) return { moved: false, reason: "请选择一个完整的背包物品和一个分类或背包。" };
+    const detachedParts = this.allBackpackItems().filter(other => other.type === item.type && other.detached);
+    // 未归类的拆分物仍须先处理；已归类到其它分类的拆分物可以独立保留，不再阻止剩余 pile 进入新分类。
+    if (detachedParts.some(other => !other.groupedDetached)) {
+      return { moved: false, reason: "请先收回该 pile 已拆出的物品，再进行归类。" };
+    }
+    // 同一分类中的拆分物与原 pile 合并；其它分类中的同类拆分物保持独立数量与独立分类。
+    detachedParts.filter(other => other.backpackParent === customNode).forEach(other => this.removeBackpackVisualItem(other));
+    this.backpackItemGroups[item.type] = customNode.customId || null;
+    this.setBackpackOpen(true, viewportWidth);
+    return { moved: true, mergedParts: detachedParts.filter(other => other.backpackParent === customNode).length };
+  }
+
+  /** 将同一容器内的同类独立份额合并：优先并入完整 pile，否则合并为一份独立数量。 */
+  mergeGroupedBackpackItemsInContainer(container, type) {
+    const sameType = container.children.filter(item => item.backpackItemOwner === this.backpack && item.type === type);
+    const primary = sameType.find(item => !item.detached);
+    const groupedParts = sameType.filter(item => item.detached && item.groupedDetached);
+    if (primary && groupedParts.length) {
+      groupedParts.forEach(item => this.removeBackpackVisualItem(item));
+      this.syncBackpackQuantity(type);
+      return true;
+    }
+    if (!primary && groupedParts.length > 1) {
+      const anchor = groupedParts[0];
+      anchor.quantity = groupedParts.reduce((sum, item) => sum + item.quantity, 0);
+      groupedParts.slice(1).forEach(item => this.removeBackpackVisualItem(item));
+      this.captureGroupedDetachedBackpackItems();
+      return true;
+    }
+    return false;
+  }
+
+  /** 将已拆出的单独物品卡片移入分类或背包根；它不改变库存，只改变该独立份额的归属。 */
+  moveDetachedBackpackItemToCustom(item, customNode, viewportWidth = Infinity) {
+    if (!item?.backpackItemOwner || !item.detached || (!customNode?.customNode && customNode !== this.backpack)) {
+      return { moved: false, reason: "只有已拆出的单独物品可以移入分类或背包。" };
+    }
+    const previousParent = item.backpackParent || this.backpack;
+    previousParent.children = previousParent.children.filter(child => child !== item);
+    customNode.children.push(item);
+    item.backpackParent = customNode;
+    // 归类后的拆分物不再是原 pile 的临时延伸：取消来源引用与来源线，但保留 detached 标记用于正确扣除原 pile 数量。
+    item.sourcePile = null;
+    item.groupedDetached = true;
+    item.detachedRecordId = item.detachedRecordId || `detached-${this.nextBackpackDetachedRecordId++}`;
+    this.mergeGroupedBackpackItemsInContainer(customNode, item.type);
+    this.captureGroupedDetachedBackpackItems();
+    this.layoutBackpackTree(viewportWidth);
+    return { moved: true };
+  }
+
+  /** 从当前显示树中移除物品卡片；库存本身仍由 inventory 统一保存。 */
+  removeBackpackVisualItem(item) {
+    const parent = item?.backpackParent || this.backpack;
+    parent.children = parent.children.filter(node => node !== item);
+    this.uiNodes = this.uiNodes.filter(node => node !== item);
+    if (item?.detachedRecordId) {
+      this.backpackDetachedRecords = this.backpackDetachedRecords.filter(record => record.id !== item.detachedRecordId);
+    }
+  }
+
+  /** 将当前已归类的拆分物写回持久记录；普通临时拆分物仍会在关闭背包时按旧规则归位。 */
+  captureGroupedDetachedBackpackItems() {
+    this.backpackDetachedRecords = this.allBackpackItems()
+      .filter(item => item.detached && item.groupedDetached && item.quantity > 0)
+      .map(item => ({
+        id: item.detachedRecordId || `detached-${this.nextBackpackDetachedRecordId++}`,
+        type: item.type,
+        quantity: item.quantity,
+        customId: item.backpackParent?.customId || null,
+        dynamicOrigins: item.dynamicOrigins ? [...item.dynamicOrigins] : null
+      }));
+  }
+
+  /** 关闭/重建背包前清理瞬时物品卡片，但保留自定义分类树。 */
+  clearBackpackVisualItems(parent = this.backpack) {
+    parent.children.filter(child => child.customNode).forEach(child => this.clearBackpackVisualItems(child));
+    parent.children = parent.children.filter(child => child.customNode);
+  }
+
+  /** 根据当前展开状态递归显示分类树，并使用分层列布局避免同级物品重叠。 */
+  layoutBackpackTree(viewportWidth = Infinity) {
+    const direction = this.backpack.x > viewportWidth / 2 ? -1 : 1;
+    const rows = [];
+    const visit = (parent, depth, visible) => {
+      parent.children.forEach(child => {
+        child.visible = visible;
+        if (visible) rows.push({ node: child, depth });
+        if (child.customNode) visit(child, depth + 1, visible && child.open);
+      });
+    };
+    visit(this.backpack, 1, this.backpack.open);
+    rows.forEach(({ node, depth }, index) => {
+      node.x = this.backpack.x + direction * (150 + (depth - 1) * 135);
+      node.y = this.backpack.y + (index - (rows.length - 1) / 2) * 82;
+      if (node.backpackItemOwner && !node.detached) node.pileAnchor = { x: node.x, y: node.y };
+    });
+  }
+
   /**
-   * 用背包库存重建 UI 子节点。每一种物品只对应一个数值节点，数量显示在节点左下角；
-   * 节点右下的分离条决定下一次拆出多少数量，分离后的节点仍通过连线指向原节点。
+   * 用库存重建背包物品卡片，同时按 backpackItemGroups 恢复它们的自定义归属。
+   * 自定义节点对象本身不会重建，所以关闭、复原或再次打开背包都不会丢失玩家整理出的层级。
    */
   setBackpackOpen(open, viewportWidth = Infinity) {
-    this.uiNodes = this.uiNodes.filter(node => node.backpackItemOwner !== this.backpack);
-    this.backpack.children = this.backpack.children.filter(node => !node.backpackItemOwner);
+    // 仅在当前确实打开时从可见卡片采集记录；关闭后再次打开必须沿用上一次保存的分类拆分物。
+    if (this.backpack.open) this.captureGroupedDetachedBackpackItems();
+    this.uiNodes = this.uiNodes.filter(node => node.backpackItemOwner !== this.backpack && !node.customNode);
+    this.clearBackpackVisualItems();
     this.backpack.open = open;
-    if (!open) return;
+    if (!open) {
+      this.layoutBackpackTree(viewportWidth);
+      return;
+    }
 
-    const entries = Object.entries(this.inventory);
-    const columns = Math.max(1, Math.ceil(Math.sqrt(entries.length)));
-    const rows = Math.ceil(entries.length / columns);
-    const direction = this.backpack.x > viewportWidth / 2 ? -1 : 1;
-
-    entries.filter(([, count]) => count > 0).forEach(([type, count], typeIndex) => {
-      // 不同 pile 以 130×90 的网格均匀排开，避免 100×60 节点彼此相撞。
-      const column = typeIndex % columns;
-      const row = Math.floor(typeIndex / columns);
-      const pileX = this.backpack.x + direction * (150 + column * 130);
-      const pileY = this.backpack.y + (row - (rows - 1) / 2) * 90;
-      const item = new Node(type, pileX, pileY, true);
-      item.pileAnchor = { x: pileX, y: pileY };
+    const customNodes = this.customBackpackNodes();
+    this.uiNodes.push(...customNodes);
+    const sourcePiles = new Map();
+    Object.entries(this.inventory).filter(([, count]) => count > 0).forEach(([type, count]) => {
+      const parent = this.customBackpackContainer(this.backpackItemGroups[type]);
+      const item = new Node(type, parent.x, parent.y, true);
       item.quantity = count;
       item.splitAmount = 1;
       item.detached = false;
       item.backpackItemOwner = this.backpack;
+      item.backpackParent = parent;
       item.isNumericPile = true;
-      // 每一只动态节点的原父级记录在背包展开时复制到该 pile，拆分时再随单独物品移动。
       if (NODE_TYPES[type]?.dynamic) item.dynamicOrigins = [...(this.dynamicInventoryOrigins[type] || [])];
-      // 背包展开物品的大小跟随世界缩放，位置仍保留在屏幕 UI 层。
       item.scalesWithWorld = true;
-      this.backpack.children.push(item);
+      parent.children.push(item);
+      this.uiNodes.push(item);
+      sourcePiles.set(type, item);
+    });
+    // 恢复已归类的独立拆分物：它们不再连接原 pile，但仍会从原 pile 的可用数量中扣除。
+    this.backpackDetachedRecords.forEach(record => {
+      if (!(this.inventory[record.type] > 0) || !(record.quantity > 0)) return;
+      const parent = this.customBackpackContainer(record.customId);
+      const item = new Node(record.type, parent.x, parent.y, true);
+      item.quantity = record.quantity;
+      item.detached = true;
+      item.groupedDetached = true;
+      item.detachedRecordId = record.id;
+      item.backpackItemOwner = this.backpack;
+      item.backpackParent = parent;
+      item.isNumericPile = true;
+      item.scalesWithWorld = true;
+      if (record.dynamicOrigins) {
+        item.dynamicOrigins = [...record.dynamicOrigins];
+        const source = sourcePiles.get(record.type);
+        if (source?.dynamicOrigins) {
+          const ids = new Set(item.dynamicOrigins.map(origin => origin.id));
+          source.dynamicOrigins = source.dynamicOrigins.filter(origin => !ids.has(origin.id));
+        }
+      }
+      parent.children.push(item);
       this.uiNodes.push(item);
     });
+    Object.keys(this.inventory).forEach(type => this.syncBackpackQuantity(type));
+    this.layoutBackpackTree(viewportWidth);
   }
 
   /** 返回某一类型目前仍被拆出、尚未归位的总数量；库存总数不在这里修改。 */
   detachedBackpackQuantity(type) {
-    return this.backpack.children
+    return this.allBackpackItems()
       .filter(item => item.type === type && item.detached)
       .reduce((sum, item) => sum + item.quantity, 0);
   }
@@ -800,7 +1013,7 @@ class World {
    */
   syncBackpackQuantity(type) {
     const available = Math.max(0, (this.inventory[type] || 0) - this.detachedBackpackQuantity(type));
-    this.backpack.children
+    this.allBackpackItems()
       .filter(item => item.type === type && !item.detached && item.backpackItemOwner === this.backpack)
       .forEach(item => {
         item.quantity = available;
@@ -824,7 +1037,8 @@ class World {
     if (item.dynamicOrigins) {
       detached.dynamicOrigins = item.dynamicOrigins.splice(0, amount);
     }
-    this.backpack.children.push(detached);
+    detached.backpackParent = item.backpackParent || this.backpack;
+    detached.backpackParent.children.push(detached);
     this.uiNodes.push(detached);
     this.syncBackpackQuantity(item.type);
     return detached;
@@ -832,7 +1046,7 @@ class World {
 
   /** 兼容旧交互调用：数值背包节点不再需要逐层重新排版。 */
   layoutPile(type) {
-    return this.backpack.children.find(item => item.type === type && !item.detached);
+    return this.allBackpackItems().find(item => item.type === type && !item.detached);
   }
 
   /** 若拆出的数值节点放回原节点附近，则合并回其来源节点。 */
@@ -848,8 +1062,7 @@ class World {
   mergeBackpackItem(item) {
     if (!item?.detached || !item.sourcePile) return false;
     const anchor = item.sourcePile;
-    this.backpack.children = this.backpack.children.filter(node => node !== item);
-    this.uiNodes = this.uiNodes.filter(node => node !== item);
+    this.removeBackpackVisualItem(item);
     if (item.dynamicOrigins?.length) {
       anchor.dynamicOrigins = [...item.dynamicOrigins, ...(anchor.dynamicOrigins || [])];
     }
@@ -984,9 +1197,8 @@ class World {
       }
     });
     // 吃完但仍在震动的背包节点在效果结束后才从画面和背包临时列表中移除。
-    this.backpack.children.filter(item => item.consumedUntil && now >= item.consumedUntil).forEach(item => {
-      this.backpack.children = this.backpack.children.filter(node => node !== item);
-      this.uiNodes = this.uiNodes.filter(node => node !== item);
+    this.allBackpackItems().filter(item => item.consumedUntil && now >= item.consumedUntil).forEach(item => {
+      this.removeBackpackVisualItem(item);
     });
   }
 }

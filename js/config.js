@@ -74,6 +74,14 @@
   // 游戏启动后循环播放的背景音乐；volume 范围为 0 到 1。
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
+  // 背包分类规则：每个父级（背包根或任意自定义分类）最多可创建多少个直接自定义子节点。
+  const BACKPACK_CUSTOM_CONFIG = { maxChildrenPerLayer: 5 };
+
+  // 左侧背包工作区：宽度可由边缘把手拖到全屏，内容缩放与世界相机完全独立。
+  // 工作区最小宽度仍会受背包/思考节点实际右边界约束，避免拖动边框压到它们身上。
+  // 工作区只允许缩小内容：1 是初始大小，minContentScale 可按需要继续调小。
+  const WORKSPACE_PANEL_CONFIG = { defaultWidth: 360, minWidth: 150, maxContentScale: 1, minContentScale: .1, zoomSensitivity: .0008 };
+
   // 游戏时间与昼夜表现。太阳在白天、月亮在黑夜中，都会从屏幕右侧运行至左侧。
   const TIME_CONFIG = {
     dayDuration: 60,
@@ -122,6 +130,8 @@
     手: { emoji: "✋", children: [], spawnChance: 1, spawnCount: [1, 1], durability: 100, durabilityRecovery: .5, defaultHarvestWear: 1, sound: "hand.wav", volume: .65 },
     嘴: { emoji: "👄", children: [], spawnChance: 1, spawnCount: [1, 1], durability: 100, durabilityRecovery: .5, defaultEatWear: 1, sound: "mouth.wav", volume: .65 },
     背包: { emoji: "🎒", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "backpack.wav", volume: .7 },
+    // 自定义节点是背包内部的分类容器：它不可采集、不可食用、不可放置，只保存玩家整理物品的层级。
+    自定义: { emoji: "🗂️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "backpack.wav", volume: .6 },
     思考: { emoji: "💡", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "thought.wav", volume: .6 },
     刷新: { emoji: "🔄", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "refresh.wav", volume: .6 },
     饥饿: { emoji: "🍖", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "hunger.wav", volume: .55 },
@@ -158,6 +168,7 @@
     手: "这是你勤劳的双手。用它采集东西，给自己弄点吃的；别忘了它也会磨损。",
     嘴: "这是你的嘴。把背包里的花或种子送到这里，给自己补充一点饥饿。",
     背包: "这是你的背包。采到的东西都会放在这里，也可以按数量拆出来摆放。",
+    自定义: "这是一个自定义分类节点。用加号建立下级分类；按住 Ctrl 点击可改名或把已选中的背包物品归入这里。",
     思考: "一盏亮起来的小灯。它提醒你：这个世界还可以被继续想象。",
     刷新: "想重新整理眼前的结构时，就按一下这里。",
     饥饿: "你的肚子正在计数。采集会消耗它，吃东西可以补回来。",
@@ -194,7 +205,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, TIME_CONFIG, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, BACKPACK_CUSTOM_CONFIG, WORKSPACE_PANEL_CONFIG, TIME_CONFIG, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();
