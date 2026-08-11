@@ -59,7 +59,7 @@ function frame(now) {
   celestial.tick();
   restartButton.hidden = !world.gameOver;
   // 黏附到鼠标的节点优先成为唯一蓝色焦点；没有黏附节点时由普通选中状态决定。
-  const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem
+  const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem || interaction.carriedBulkPile
     || (interaction.handActive && world.uiNodes.find(node => node.type === "手"))
     || (interaction.mouthActive && world.uiNodes.find(node => node.type === "嘴"));
   renderer.draw(interaction.camera, interaction.hovered, interaction.handActive, now, interaction.selectionBox, attachedNode);

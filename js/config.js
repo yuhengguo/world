@@ -89,7 +89,7 @@
     森林: { emoji: "🌳🌳", children: ["树", "蘑菇"], spawnChance: 1, spawnCount: [1, 1], sound: "forest.wav", volume: .7 },
     树: { emoji: "🌳", children: ["树枝", "树干", "鸟"], minimumStaticChildren: 1, spawnChance: 1, spawnCount: [4, 6], sound: "tree.wav", volume: .7 },
     树枝: { emoji: "🌿", children: ["花", "种子"], spawnChance: 1, spawnCount: [1, 1], sound: "branch.wav", volume: .7 },
-    树干: { emoji: "🪵🪵", children: ["原木"], spawnChance: 1, spawnCount: [1, 1], sound: "trunk.wav", volume: .7 },
+    树干: { emoji: "🪵🪵", children: ["原木","甲虫"], spawnChance: 1, spawnCount: [1, 1], sound: "trunk.wav", volume: .7 },
     原木: { emoji: "🪵", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 6, harvestHungerCost: .5, harvestWear: 1.2, sound: "wood.wav", volume: .75 },
     花: { emoji: "🌸", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 2, harvestHungerCost: .2, harvestWear: .4, edible: true, hungerRestore: 2, eatWear: .5, sound: "flower.wav", volume: .65 },
     种子: { emoji: "🌰", children: [], spawnChance: 1, spawnCount: [1, 1], harvestClicks: 3, harvestHungerCost: .2, harvestWear: .6, edible: true, hungerRestore: 4, eatWear: .8, poisonChance: .2, poisonDamage: 2, sound: "seed.wav", volume: .65 },
@@ -97,7 +97,9 @@
 
     // 动态节点示例：spawnChance 是每次展开树时出现鸟群的概率；spawnCount 是出现后鸟的随机数量范围（含两端）。
     // 例如改成 spawnChance: .5, spawnCount: [1, 4]，表示有 50% 概率出现 1 到 4 只鸟。
-    鸟: { emoji: "🐦", children: [], spawnChance: 1, spawnCount: [1, 3], dynamic: { speed: 420, turnInterval: [650, 1500] }, harvestClicks: 4, harvestHungerCost: .3, harvestWear: .8, edible: true, hungerRestore: 3, eatWear: 1, sound: "bird.wav", volume: .65 },
+    // singleStaticBoundsPadding 仅在父节点只剩 1 个静态子节点时生效，单位为世界坐标；可分别调大 X/Y 活动余量。
+    鸟: { emoji: "🐦", children: [], spawnChance: 1, spawnCount: [1, 1], dynamic: { speed: 420, turnInterval: [650, 1500], singleStaticBoundsPadding: { x: 220, y: 140 } }, harvestClicks: 4, harvestHungerCost: .3, harvestWear: .8, edible: true, hungerRestore: 3, eatWear: 1, sound: "bird.wav", volume: .65 },
+    甲虫: { emoji: "🪲", children: [], spawnChance: 1, spawnCount: [1, 1], dynamic: { speed: 42, turnInterval: [650, 1500], singleStaticBoundsPadding: { x: 220, y: 140 } }, harvestClicks: 2, harvestHungerCost: .1, harvestWear: .8, edible: true, hungerRestore: 1, eatWear: 1, sound: "bird.wav", volume: .65 },
 
     // 这些节点可能出现在土块下方的隐藏层；每种都可单独替换音频与音量。
     土: { emoji: "🟫", children: ["土块"], spawnChance: 1, spawnCount: [1, 1], hiddenLayer: true, groundLayer: true, sound: "soil.wav", volume: .6 },
@@ -161,7 +163,8 @@
     生命: "这是你还能继续探索的余量。饥饿耗尽后，生命会替你付账。",
     专注: "你的专注储备。先留在这里，未来它会成为更复杂行动的燃料。",
     天空: "抬头看看天空。打开它，太阳会按照游戏中的时间穿过这片世界。",
-    太阳: "正在天空中运行的太阳。它不可以采集，只用来告诉你时间正在流逝。"
+    太阳: "正在天空中运行的太阳。它不可以采集，只用来告诉你时间正在流逝。",
+    甲虫: "一只绿色的甲壳虫，吃了它不会感觉多饱。"
   };
 
   /* 以下派生数据由类型表自动生成，其他模块无需维护第二份节点信息。 */

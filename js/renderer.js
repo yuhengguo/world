@@ -55,7 +55,7 @@ class Renderer {
       ctx.fillText(`×${quantity}`, node.x - 44, node.y + 24);
       // 原节点右下角只保留直接输入数量的框；滑条已取消。
       const minimum = 1;
-      if (!node.detached && node.quantity > minimum) {
+      if (!node.detached && !node.worldPile && node.quantity > minimum) {
         ctx.strokeStyle = "#8bd3ff";
         ctx.strokeRect(node.x + 1, node.y + 14, 47, 16);
         // 输入框关闭后仍显示最近确认的分离数量，让玩家知道下一次会拆出多少。

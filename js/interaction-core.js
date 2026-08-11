@@ -29,6 +29,9 @@ class Interaction {
     this.carriedTerminalOrigin = null;
     this.carriedUIItem = null;
     this.carriedUIOrigin = null;
+    // 双击背包 pile 后使用的整叠携带状态；它不属于“拆出的单件物品”。
+    this.carriedBulkPile = null;
+    this.carriedBulkPileOrigin = null;
     this.placeKeyHeld = false;
     this.quantityInput = document.getElementById("splitInput");
     this.quantityInputNode = null;
@@ -73,6 +76,8 @@ class Interaction {
       if (event.button !== 0) return;
       if (this.handleCarriedTerminalDown(event)) return;
       if (this.handleCarriedUIDown(event)) return;
+      if (this.handleCarriedBulkPileDown(event)) return;
+      if (this.handleBulkPilePlacementDown(event)) return;
       if (this.handleToolNodeDown(event)) return;
       if (this.handleUINodeDown(event)) return;
       if (this.mouthActive || this.handActive) return;
@@ -82,6 +87,7 @@ class Interaction {
       this.moveTools(event);
       this.moveCarriedTerminal(event);
       this.moveCarriedUI(event);
+      this.moveCarriedBulkPile(event);
       this.moveViewPan(event);
       this.moveSelectedUIInteraction(event);
       this.moveWorldInteraction(event);
@@ -113,6 +119,7 @@ class Interaction {
   handleContextMenu(event) {
     if (this.cancelCarriedTerminal(event)) return;
     if (this.cancelCarriedUI(event)) return;
+    if (this.cancelCarriedBulkPile(event)) return;
     this.cancelTool(event);
   }
 }

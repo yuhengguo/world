@@ -62,7 +62,7 @@ Interaction.prototype.bindQuantityInput = function() {
   window.addEventListener("keydown", event => {
     if (event.code !== "Space" || document.activeElement === this.quantityInput) return;
     this.placeKeyHeld = true;
-    if (this.carriedUIItem?.backpackItemOwner) event.preventDefault();
+    if (this.carriedUIItem?.backpackItemOwner || this.carriedBulkPile) event.preventDefault();
   });
   window.addEventListener("keyup", event => { if (event.code === "Space") this.placeKeyHeld = false; });
   ["pointerdown", "mousedown", "click"].forEach(name => this.quantityInput.addEventListener(name, event => {
@@ -154,8 +154,8 @@ Interaction.prototype.handleCarriedUIDown = function(event) {
     const result = this.world.placeBackpackItem(item, ground);
     if (!result.placed) this.ui.setStatus(`无法放置：${result.reason}`);
     else {
-      this.audio.play(result.node.type);
-      this.ui.setStatus(`已将 ${result.node.type} 放置在 ${ground.type} 上。`);
+      this.audio.play(result.node?.type || item.type);
+      this.ui.setStatus(result.message || `已将 ${result.node.type} 放置在 ${ground.type} 上。`);
       if (!result.itemRemaining) { this.carriedUIItem = null; this.carriedUIOrigin = null; }
     }
     this.skipClickAfterDrag = true;
@@ -178,8 +178,41 @@ Interaction.prototype.handleCarriedUIDown = function(event) {
   return true;
 };
 
+/** 整叠 pile 已黏附光标时，仅空格加左键才会执行放置，普通左键不会误消耗整叠库存。 */
+Interaction.prototype.handleCarriedBulkPileDown = function(event) {
+  if (!this.carriedBulkPile) return false;
+  if (!this.placeKeyHeld) return true;
+  const pile = this.carriedBulkPile;
+  const point = this.worldPosition(event);
+  const target = [...this.world.nodes].reverse().find(node => node.visible && !node.locked && this.hit(node, point));
+  const result = this.world.placeBackpackPile(pile, target);
+  if (!result.placed) {
+    this.ui.setStatus(`无法放置整叠：${result.reason}`);
+  } else {
+    this.audio.play(result.node?.type || pile.type);
+    this.ui.setStatus(result.message);
+    this.world.uiNodes.forEach(node => { node.selected = false; node.pileGroupSelected = false; });
+    this.carriedBulkPile = null;
+    this.carriedBulkPileOrigin = null;
+  }
+  this.skipClickAfterDrag = true;
+  return true;
+};
+
+/** 兼容旧的选中状态：只有已黏附的整叠由 handleCarriedBulkPileDown 放置。 */
+Interaction.prototype.handleBulkPilePlacementDown = function(event) {
+  return false;
+};
+
 Interaction.prototype.moveCarriedUI = function(event) {
   if (this.carriedUIItem) { this.carriedUIItem.x = event.clientX; this.carriedUIItem.y = event.clientY; }
+};
+
+/** 让整叠背包节点按 UI 屏幕坐标跟随光标，不改变它在背包内的来源锚点。 */
+Interaction.prototype.moveCarriedBulkPile = function(event) {
+  if (!this.carriedBulkPile) return;
+  this.carriedBulkPile.x = event.clientX;
+  this.carriedBulkPile.y = event.clientY;
 };
 
 Interaction.prototype.moveSelectedUIInteraction = function(event) {
@@ -220,13 +253,31 @@ Interaction.prototype.cancelCarriedUI = function(event) {
   return true;
 };
 
+/** 右键取消整叠携带，只恢复视觉位置与选择状态，不改变库存。 */
+Interaction.prototype.cancelCarriedBulkPile = function(event) {
+  if (!this.carriedBulkPile) return false;
+  event.preventDefault();
+  this.carriedBulkPile.x = this.carriedBulkPileOrigin.x;
+  this.carriedBulkPile.y = this.carriedBulkPileOrigin.y;
+  this.carriedBulkPile.selected = false;
+  this.carriedBulkPile.pileGroupSelected = false;
+  this.carriedBulkPile = null;
+  this.carriedBulkPileOrigin = null;
+  return true;
+};
+
 Interaction.prototype.handleDoubleClick = function(event) {
   const item = [...this.world.uiNodes].reverse().find(node => node.backpackItemOwner && node.visible && this.hit(node, event));
   if (item) {
+    const pile = item.detached ? item.sourcePile : item;
     if (item.detached) this.world.mergeBackpackItem(item);
-    this.world.uiNodes.forEach(node => node.selected = node.backpackItemOwner === this.world.backpack && !node.detached && node.type === item.type);
-    this.world.uiNodes.filter(node => node.backpackItemOwner === this.world.backpack && !node.detached && node.type === item.type).forEach(node => node.pileGroupSelected = true);
-    this.ui.setStatus(`已选中 ${item.type} pile。`);
+    this.world.uiNodes.forEach(node => {
+      node.selected = node === pile;
+      node.pileGroupSelected = node === pile;
+    });
+    this.carriedBulkPile = pile;
+    this.carriedBulkPileOrigin = { x: pile.x, y: pile.y };
+    this.ui.setStatus(`已拿起 ${pile.type} ×${pile.quantity}：按住空格并左键点击目标可放置整叠，右键取消。`);
     return;
   }
   const resource = [...this.world.uiNodes].reverse().find(node => node.resourcePileOwner && node.visible && this.hit(node, event));

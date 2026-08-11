@@ -108,6 +108,13 @@ Interaction.prototype.handleWorldClick = function(event) {
   const point = this.worldPosition(event);
   const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
   if (!node) return;
+  // 世界中的整叠容器以单击直接展开，便于立即看到其中必须逐个采集的同类资源。
+  if (node.worldPile) {
+    if (node.open) this.world.collapse(node);
+    else this.world.expand(node);
+    this.audio.play(node.type);
+    return;
+  }
   if (this.world.touchIndestructible(node, performance.now())) { this.ui.setStatus(`触碰到${node.type}：它无法被采集。`); return; }
   if (!this.wasSelectedOnDown) {
     this.world.nodes.forEach(item => item.selected = false);
