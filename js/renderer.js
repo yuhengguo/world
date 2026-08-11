@@ -184,6 +184,24 @@ class Renderer {
     });
   }
 
+  /**
+   * 绘制独立的背景天文层。
+   * 天空与昼夜天体使用屏幕坐标、不受相机缩放影响，但必须先于世界节点绘制，
+   * 这样无论它们移动到哪里，山、森林与资源节点都会自然遮挡在它们前方。
+   */
+  drawCelestialLayer(hovered, handActive, now, activeBlue, allowMultipleBlue) {
+    const { ctx, world } = this;
+    const celestialNodes = world.uiNodes.filter(node => node.celestialUI && node.visible);
+    if (!celestialNodes.length) return;
+
+    // 先画天空到当前可见天体的连线，再画节点本身，使线端落在节点卡片下方。
+    celestialNodes.filter(node => node !== world.sky).forEach(node => {
+      ctx.strokeStyle = "#777";
+      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(node.x, node.y); ctx.stroke();
+    });
+    celestialNodes.forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+  }
+
   /** 按当前相机位置完整绘制一帧。 */
   /** 绘制鼠标框选区域；它位于屏幕层，不受世界相机坐标转换影响。 */
   drawSelectionBox(box) {
@@ -220,6 +238,8 @@ class Renderer {
     // 框选结束后保留的多选也视为框选特殊状态，直到玩家进行新的单节点操作。
     const allowMultipleBlue = !activeBlue && (Boolean(selectionBox) || selectedWorldCount + selectedUICount > 1);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 背景天文层必须在相机世界层之前落笔，不能与普通 UI 一起绘制到最前方。
+    this.drawCelestialLayer(hovered, handActive, now, activeBlue, allowMultipleBlue);
     ctx.save();
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
@@ -243,14 +263,10 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
-    // 天空只与当前可见的昼/夜天体连线；太阳与月亮不会同时出现。
-    ["太阳", "月亮"].map(type => world.uiNodes.find(node => node.type === type)).filter(node => world.sky?.open && node?.visible).forEach(celestial => {
-      ctx.strokeStyle = "#777";
-      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(celestial.x, celestial.y); ctx.stroke();
-    });
     this.drawBackpackLinks();
     this.drawResourceLinks();
-    world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
+    // 天文节点已在背景层画完；这里仅绘制身体、背包等始终位于最前方的普通 UI。
+    world.uiNodes.filter(node => !node.celestialUI).forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
     this.drawSelectionBox(selectionBox);
     this.drawGameOver();
   }

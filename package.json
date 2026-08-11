@@ -1,0 +1,7 @@
+{
+  "name": "node-world",
+  "private": true,
+  "scripts": {
+    "test": "node tests/game-rules.test.js"
+  }
+}
