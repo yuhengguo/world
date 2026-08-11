@@ -55,7 +55,7 @@ class Renderer {
       ctx.fillText(`×${quantity}`, node.x - 44, node.y + 24);
       // 原节点右下角只保留直接输入数量的框；滑条已取消。
       const minimum = 1;
-      if (!node.detached && node.quantity > minimum) {
+      if (!node.detached && !node.worldPile && node.quantity > minimum) {
         ctx.strokeStyle = "#8bd3ff";
         ctx.strokeRect(node.x + 1, node.y + 14, 47, 16);
         // 输入框关闭后仍显示最近确认的分离数量，让玩家知道下一次会拆出多少。
@@ -63,7 +63,9 @@ class Renderer {
         ctx.font = "11px Microsoft YaHei";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(String(node.splitAmount || minimum), node.x + 24, node.y + 22);
+        const splitAmount = Number(node.splitAmount || minimum);
+        const splitLabel = Number.isInteger(splitAmount) ? String(splitAmount) : splitAmount.toFixed(1);
+        ctx.fillText(splitLabel, node.x + 24, node.y + 22);
       }
     }
     // 手、嘴的底部耐久条独立于采集进度条；归零后该节点会被隐藏。
@@ -221,7 +223,8 @@ class Renderer {
     ctx.save();
     ctx.translate(camera.x, camera.y);
     ctx.scale(camera.scale, camera.scale);
-    world.nodes.forEach(node => this.drawHiddenChain(node));
+    // 仅为当前可见的节点绘制问号地下层；收起森林后，被隐藏的树不应继续露出其地下卡片。
+    world.nodes.forEach(node => node.visible && this.drawHiddenChain(node));
     world.edges.forEach(edge => {
       if (!edge.from.visible || !edge.to.visible) return;
       ctx.strokeStyle = "#777";
@@ -240,6 +243,11 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
+    // 天空只与当前可见的昼/夜天体连线；太阳与月亮不会同时出现。
+    ["太阳", "月亮"].map(type => world.uiNodes.find(node => node.type === type)).filter(node => world.sky?.open && node?.visible).forEach(celestial => {
+      ctx.strokeStyle = "#777";
+      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(celestial.x, celestial.y); ctx.stroke();
+    });
     this.drawBackpackLinks();
     this.drawResourceLinks();
     world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));

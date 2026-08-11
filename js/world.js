@@ -4,9 +4,7 @@
  */
 
 (() => {
-const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node } = window.TreeWorld;
-
-const random = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const { FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
 
 /** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
 const spawnCountRange = definition => {
@@ -23,18 +21,29 @@ const spawnCountRange = definition => {
 class World {
   /** 创建树、身体、背包及其初始状态。 */
   constructor(width, height) {
+    // 新世界从 config.js 的同一随机种子重新起算，便于完全复现世界生成。
+    resetRandomSequences();
     this.nodes = [];
     this.edges = [];
     this.uiNodes = [];
     this.inventory = {};
+    // 动态物品除了数量外还需保存“被捕获前属于哪一个父节点”的信息，供放回世界时判定归属。
+    this.dynamicInventoryOrigins = {};
+    this.nextDynamicOriginId = 1;
     this.resources = Object.fromEntries(Object.entries(RESOURCE_CONFIG).map(([type, data]) => [type, data.initial]));
     this.gameOver = false;
     this.lastTick = 0;
 
-    this.root = new Node("树", width / 2, 120);
-    this.root.soilLayerCount = random(3, 6);
-    this.createHiddenSoilChain(this.root, this.root.soilLayerCount);
+    // 山是不可被清空的世界根；森林、草地和岩壁等区域都会挂在它下面。
+    this.root = new Node("山", width / 2, height / 2);
+    // 生成路径是局部随机流的唯一地址；同一总种子下，每条分支都可独立复现。
+    this.root.generationKey = "world-root";
     this.nodes.push(this.root);
+
+    // 天空属于固定屏幕层：它不是山的子节点，也不会因缩放、平移或拖动而改变位置。
+    this.sky = new Node("天空", width / 2, 75, true);
+    this.sky.fixedUI = true;
+    this.sky.celestialUI = true;
 
     // UI 使用屏幕坐标：初始化在左侧中部，永远不受世界相机缩放影响。
     // 身体固定在底栏、饥饿节点左侧，不允许被拖动。
@@ -50,7 +59,7 @@ class World {
       body: { x: this.body.x, y: this.body.y },
       backpack: { x: this.backpack.x, y: this.backpack.y }
     };
-    this.uiNodes.push(this.body, this.backpack, this.thought, this.resetNode);
+    this.uiNodes.push(this.sky, this.body, this.backpack, this.thought, this.resetNode);
     this.createResourcePiles(width, height);
   }
 
@@ -64,32 +73,311 @@ class World {
     for (let index = 0; index < count; index++) {
       // 隐藏层纵向向上错开，最上方节点最后由树显示在整叠最下端。
       // 每条隐藏链的终点固定为配置中唯一的不可破坏节点。
-      const type = index === count - 1
+      const candidates = HIDDEN_LAYER_TYPES.filter(type => {
+        const definition = NODE_TYPES[type] || {};
+        const chance = definition.spawnChance ?? 1;
+        return createRandomStream(`${owner.generationKey}:underlay:${index}:chance:${type}`).next() < chance;
+      });
+      // 最后一层永远是基岩；若本层没有任何矿物通过概率判定，也提前以基岩封底。
+      const type = index === count - 1 || !candidates.length
         ? FINAL_HIDDEN_LAYER_TYPE
-        : HIDDEN_LAYER_TYPES[Math.floor(Math.random() * HIDDEN_LAYER_TYPES.length)];
+        : createRandomStream(`${owner.generationKey}:underlay:${index}:type`).pick(candidates);
       const layer = new Node(type, owner.x, owner.y - (index + 1) * gap);
+      layer.generationKey = `${owner.generationKey}/underlay:${index}:${type}`;
       layer.visible = false;
       layer.hiddenUnderlay = true;
       layer.locked = true;
+      // 地层属于替补 pile；揭示后也不应像普通独立终端节点一样被单独拖动。
+      layer.replacementLayer = true;
       parent.underlays = [layer];
       parent = layer;
+      if (type === FINAL_HIDDEN_LAYER_TYPE) break;
     }
   }
 
-  /** 仅揭示所属节点的下一层，不会一次把所有隐藏层放进世界。 */
-  revealNextUnderlay(node) {
-    const next = node.underlays[0];
+  /** 返回替补 pile 中紧挨着 node 的下一层；普通 children 不参与这条链。 */
+  nextReplacement(node) {
+    return node?.underlays[0] || null;
+  }
+
+  /**
+   * 用 replacement 接替 node 在所有父节点中的位置。
+   * 这是替补 pile 的连接核心：替补节点继承上层节点的父级连线，而不是成为普通子节点。
+   */
+  replaceInParents(node, replacement) {
+    const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
+    parents.forEach(parent => {
+      const index = parent.children.indexOf(node);
+      if (index >= 0) {
+        if (parent.children.includes(replacement)) parent.children.splice(index, 1);
+        else parent.children[index] = replacement;
+      } else if (!parent.children.includes(replacement)) {
+        parent.children.push(replacement);
+      }
+      this.edges = this.edges.filter(edge => !(edge.from === parent && edge.to === node));
+      if (!this.edges.some(edge => edge.from === parent && edge.to === replacement)) {
+        this.edges.push({ from: parent, to: replacement });
+      }
+    });
+    return parents;
+  }
+
+  /**
+   * 移除替补 pile 的首层，让其下一层接替到画面和父级连接中。
+   * 树、放置物、土与矿物都可使用本方法，因此“消失后由下一层替补”只有一个实现入口。
+   */
+  removeReplacementHead(node) {
+    const next = this.nextReplacement(node);
     if (!next) return null;
     next.visible = true;
     next.hiddenUnderlay = false;
     next.locked = false;
     if (!this.nodes.includes(next)) this.nodes.push(next);
+    const inheritedParents = this.replaceInParents(node, next);
+    // 没有父级连接的孤立节点才回退挂到世界根，保证替补节点仍可见、可操作。
+    if (!inheritedParents.length && !this.root.children.includes(next)) {
+      this.root.children.push(next);
+      this.edges.push({ from: this.root, to: next });
+    }
     return next;
+  }
+
+  /**
+   * 将 newHead 压入 currentHead 的上方，成为替补 pile 的新首层。
+   * currentHead 不会被删除，只会暂时隐藏，直到 newHead 被移除后再次接替回来。
+   */
+  pushReplacementHead(currentHead, newHead) {
+    newHead.underlays = [currentHead];
+    newHead.replacementLayer = true;
+    currentHead.visible = false;
+    currentHead.hiddenUnderlay = true;
+    currentHead.locked = true;
+    if (!this.nodes.includes(newHead)) this.nodes.push(newHead);
+    this.replaceInParents(currentHead, newHead);
+    return newHead;
+  }
+
+  /**
+   * 检查替补 pile 是否是一条通向基岩、且中间全为地质节点的有效承载链。
+   * 显示父子线可以变化，但这里始终只沿 underlays 读取真实的替补顺序。
+   */
+  hasValidGroundChain(node) {
+    const visited = new Set();
+    let current = node;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const definition = NODE_TYPES[current.type] || {};
+      if (!definition.groundLayer) return false;
+      if (current.type === FINAL_HIDDEN_LAYER_TYPE) return true;
+      current = this.nextReplacement(current);
+    }
+    return false;
+  }
+
+  /** 记录动态节点被收集前的父级与祖先链；即使原父级之后消失，也可按原迁徙规则寻找替代家园。 */
+  captureDynamicOrigin(node) {
+    const parent = this.parentOf(node);
+    const lineage = [];
+    let branch = parent;
+    while (branch) {
+      const ancestor = this.parentOf(branch);
+      if (!ancestor) break;
+      lineage.push({ branch, ancestor });
+      branch = ancestor;
+    }
+    return { id: this.nextDynamicOriginId++, parent, parentType: parent?.type || null, lineage };
+  }
+
+  /** 将捕获记录加入同类动态物品的库存队列；数字库存仍保留在 inventory 中作为统一总数。 */
+  storeDynamicOrigin(type, origin) {
+    if (!origin) return;
+    this.dynamicInventoryOrigins[type] = this.dynamicInventoryOrigins[type] || [];
+    this.dynamicInventoryOrigins[type].push(origin);
+  }
+
+  /** 从动态库存记录中移除一只已被吃掉或重新放回世界的动态节点。 */
+  consumeDynamicOrigin(type, origin) {
+    if (!origin) return;
+    this.dynamicInventoryOrigins[type] = (this.dynamicInventoryOrigins[type] || []).filter(item => item.id !== origin.id);
+  }
+
+  /** 将一个动态世界节点接回静态父节点，并恢复它作为世界节点的可见性与运动资格。 */
+  attachDynamicNode(type, origin, parent) {
+    const node = new Node(type, parent.x, parent.y);
+    node.dynamicOrigin = origin;
+    node.visible = Boolean(parent.visible && parent.open);
+    parent.children.push(node);
+    this.nodes.push(node);
+    this.edges.push({ from: parent, to: node });
+    return node;
+  }
+
+  /** 原父节点已不存在时，按捕获时保存的兄弟/祖先路径寻找同类型的新父节点。 */
+  findDynamicMigrationTarget(origin) {
+    for (const { branch, ancestor } of origin?.lineage || []) {
+      if (!this.nodes.includes(ancestor)) continue;
+      for (const sibling of ancestor.children.filter(child => child !== branch && !child.dynamic)) {
+        const target = this.findDescendantByType(sibling, origin.parentType);
+        if (target && !target.dynamic) return { parent: target, host: null };
+        if (this.canEventuallyContainType(sibling.type, origin.parentType)) return { parent: null, host: sibling };
+      }
+    }
+    return { parent: null, host: null };
+  }
+
+  /**
+   * 放置动态背包物品：同类父节点上直接重新挂载；放错位置则优先飞回原父节点，
+   * 原父节点已消失时再沿原有迁徙规则寻找替代父节点，找不到才消失。
+   */
+  placeDynamicBackpackItem(item, target) {
+    const origin = item.dynamicOrigins?.[0];
+    if (!origin?.parentType) return { placed: false, reason: "这个动态物品缺少原父节点记录，无法放回世界。" };
+    if (!target || target.dynamic || target.ui) return { placed: false, reason: "请放到一个静态世界节点上。" };
+
+    let parent = null;
+    let pendingHost = null;
+    let message = "";
+    if (target.type === origin.parentType) {
+      parent = target;
+      message = `${item.type} 已成为 ${target.type} 的子节点。`;
+    // 原父节点只要仍在世界中，就优先回归；它被收起时会先以隐藏状态挂回，待玩家再次展开后出现。
+    } else if (this.nodes.includes(origin.parent) && !origin.parent.dynamic) {
+      parent = origin.parent;
+      message = `放置位置不匹配，${item.type} 已飞回原来的 ${parent.type}。`;
+    } else {
+      const destination = this.findDynamicMigrationTarget(origin);
+      parent = destination.parent;
+      pendingHost = destination.host;
+      message = parent
+        ? `放置位置不匹配，${item.type} 已迁徙到另一处 ${parent.type}。`
+        : pendingHost
+          ? `放置位置不匹配，${item.type} 已停靠到未展开的 ${pendingHost.type}。`
+          : `放置位置不匹配，${item.type} 找不到同类父节点，已离开世界。`;
+    }
+
+    let node = parent ? this.attachDynamicNode(item.type, origin, parent) : null;
+    if (!node && pendingHost) {
+      node = new Node(item.type, pendingHost.x, pendingHost.y);
+      node.dynamicOrigin = origin;
+      this.nodes.push(node);
+      this.parkDynamicNode(node, pendingHost, origin.parentType);
+    }
+    this.consumeDynamicOrigin(item.type, origin);
+    item.dynamicOrigins.shift();
+    this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
+    item.quantity -= 1;
+    if (item.quantity <= 0) {
+      this.backpack.children = this.backpack.children.filter(nodeItem => nodeItem !== item);
+      this.uiNodes = this.uiNodes.filter(nodeItem => nodeItem !== item);
+    }
+    this.syncBackpackQuantity(item.type);
+    return { placed: true, node, itemRemaining: item.quantity > 0, message };
+  }
+
+  /** 将一整叠动态物品逐一按原父节点规则放回世界；动态节点绝不成为地下替补容器。 */
+  placeDynamicBackpackPile(item, target) {
+    const results = [];
+    while (item.quantity > 0 && item.dynamicOrigins?.length) {
+      results.push(this.placeDynamicBackpackItem(item, target));
+    }
+    if (!results.length) return { placed: false, reason: "这个动态 pile 没有可放回世界的个体记录。" };
+    const returned = results.filter(result => result.node).length;
+    const departed = results.length - returned;
+    return {
+      placed: true,
+      node: results.find(result => result.node)?.node || null,
+      itemRemaining: false,
+      message: departed
+        ? `已处理 ${results.length} 个动态节点：${returned} 个重新找到父节点，${departed} 个离开世界。`
+        : `已将 ${returned} 个动态节点按原父节点规则放回世界。`
+    };
+  }
+
+  /** 展开世界中的静态 pile，生成与其数量相同、必须逐个采集的同类终端子节点。 */
+  expandWorldPile(node) {
+    if (!node.worldPileChildrenCreated) {
+      const count = Math.max(1, Math.floor(node.quantity));
+      const radius = Math.max(115, Math.min(220, 70 + count * 14));
+      for (let index = 0; index < count; index++) {
+        const angle = count === 1 ? -Math.PI / 2 : -Math.PI / 2 + index * Math.PI * 2 / count;
+        const child = new Node(node.type, node.x + Math.cos(angle) * radius, node.y + Math.sin(angle) * radius);
+        // 这些子节点虽与 pile 同类型，但始终作为终端资源采集，不能再次展开成类型默认子节点。
+        child.worldPileChild = true;
+        child.generationKey = `${node.generationKey || `placed:${node.type}`}:pile-item:${index}`;
+        node.children.push(child);
+        this.nodes.push(child);
+        this.edges.push({ from: node, to: child });
+      }
+      node.worldPileChildrenCreated = true;
+    }
+    node.open = true;
+    node.children.forEach(child => child.visible = true);
+    return node.children;
+  }
+
+  /**
+   * 将选中的整个背包 pile 放入世界。
+   * 静态物品成为替补链新首层的容器；动态物品则逐只回归或迁徙，不走地层规则。
+   */
+  placeBackpackPile(item, groundNode) {
+    if (!item?.backpackItemOwner || item.detached || item.quantity < 1) return { placed: false, reason: "需要选中背包中的原始 pile。" };
+    if (this.backpack.children.some(node => node !== item && node.type === item.type && node.detached)) {
+      return { placed: false, reason: "请先收回同类已拆出的物品，再放置整叠。" };
+    }
+    if (NODE_TYPES[item.type]?.dynamic) return this.placeDynamicBackpackPile(item, groundNode);
+    if (!this.hasValidGroundChain(groundNode)) return { placed: false, reason: "这里下方必须是一条通向基岩的纯矿物地层。" };
+    if (groundNode.open) return { placed: false, reason: "请先收起当前展开的地层。" };
+
+    const placed = new Node(item.type, groundNode.x, groundNode.y);
+    placed.placedInWorld = true;
+    placed.worldPile = true;
+    placed.isNumericPile = true;
+    placed.quantity = item.quantity;
+    placed.worldPileChildrenCreated = false;
+    placed.generationKey = `placed-pile:${item.type}:${this.nodes.length}`;
+    this.pushReplacementHead(groundNode, placed);
+
+    this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - item.quantity);
+    this.backpack.children = this.backpack.children.filter(node => node !== item);
+    this.uiNodes = this.uiNodes.filter(node => node !== item);
+    this.syncBackpackQuantity(item.type);
+    return { placed: true, node: placed, itemRemaining: false, message: `已将 ${placed.type} ×${placed.quantity} 放入地层最上方。` };
+  }
+
+  /**
+   * 消耗一个背包拆分物品，并让它接替当前最上层地层。
+   * 被覆盖的地层进入新物品的替补链；物品被移除后，该地层会再接替回来。
+   */
+  placeBackpackItem(item, groundNode) {
+    // 最后一件背包物品无法再“拆出”，但可以整层作为待放置物；底部生命、饥饿、专注资源仍不走此逻辑。
+    if (!item?.backpackItemOwner || item.quantity < 1) return { placed: false, reason: "需要先拿起一个背包物品。" };
+    // 动态节点不是地层材料；它们优先依据原父节点类型重新挂载或迁徙。
+    if (NODE_TYPES[item.type]?.dynamic) return this.placeDynamicBackpackItem(item, groundNode);
+    if (!this.hasValidGroundChain(groundNode)) return { placed: false, reason: "这里下方必须是一条通向基岩的纯矿物地层。" };
+    // 曾经展开过的矿层保留其内部子节点数据，但只要当前已收起，就可作为完整替补层被覆盖。
+    // 这样放置物移除后，原矿层仍能按原来的展开状态继续被探索。
+    if (groundNode.open) return { placed: false, reason: "请先收起当前展开的地层。" };
+
+    const placed = new Node(item.type, groundNode.x, groundNode.y);
+    placed.placedInWorld = true;
+    // 放置物成为替补 pile 的新首层，原地层则作为下一层等待再次接替。
+    this.pushReplacementHead(groundNode, placed);
+
+    // inventory 是背包总数的唯一来源；放置一件后只扣总数，显示数量由统一同步函数负责重算。
+    this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
+    item.quantity -= 1;
+    if (item.quantity <= 0) {
+      this.backpack.children = this.backpack.children.filter(node => node !== item);
+      this.uiNodes = this.uiNodes.filter(node => node !== item);
+    }
+    this.syncBackpackQuantity(item.type);
+    return { placed: true, node: placed, itemRemaining: item.quantity > 0 };
   }
 
   /** 判断节点是否是规则上的终端节点，从而允许采集。 */
   isHarvestable(node) {
-    return !node.ui && !this.isIndestructible(node) && node.children.length === 0 && (rules[node.type] || []).length === 0;
+    return !node.ui && !node.worldPile && !this.isIndestructible(node)
+      && (node.worldPileChild || (node.children.length === 0 && (rules[node.type] || []).length === 0));
   }
 
   /** 根据配置判断节点是否为不可采集、不可删除的硬性节点。 */
@@ -110,64 +398,79 @@ class World {
   }
 
   /** 在不与可见节点重叠的位置生成子节点。 */
-  findPosition(parent) {
+  findPosition(parent, stream) {
     for (let radius = 150; radius < 700; radius += 80) {
       for (let i = 0; i < 50; i++) {
-        const angle = Math.random() * Math.PI * 2;
+        const angle = stream.next() * Math.PI * 2;
         const x = parent.x + Math.cos(angle) * radius;
         const y = parent.y + Math.sin(angle) * radius;
-        const occupied = this.nodes.some(n => n.visible && Math.abs(n.x - x) < NODE_SIZE.width && Math.abs(n.y - y) < NODE_SIZE.height);
+        // 动态生物不会改变静态节点的生成位置，否则鸟在不同时间飞到哪里会间接扰乱同一种子的世界布局。
+        const occupied = this.nodes.some(n => !n.dynamic && n.visible && Math.abs(n.x - x) < NODE_SIZE.width && Math.abs(n.y - y) < NODE_SIZE.height);
         if (!occupied) return { x, y };
       }
     }
     return { x: parent.x + 200, y: parent.y + 150 };
   }
 
+  /** 创建并接入一个世界子节点；树在这里获得各自独立的地下隐藏层。 */
+  createWorldChild(parent, type) {
+    const sameTypeIndex = parent.children.filter(child => child.type === type).length;
+    const parentKey = parent.generationKey || parent.type;
+    const generationKey = `${parentKey}/${type}:${sameTypeIndex}`;
+    const position = this.findPosition(parent, createRandomStream(`${generationKey}:position`));
+    const child = new Node(type, position.x, position.y);
+    child.generationKey = generationKey;
+    if (type === "树") {
+      child.soilLayerCount = createRandomStream(`${generationKey}:underlay-count`).integer(3, 6);
+      this.createHiddenSoilChain(child, child.soilLayerCount);
+    }
+    parent.children.push(child);
+    this.nodes.push(child);
+    this.edges.push({ from: parent, to: child });
+    return child;
+  }
+
   /** 展开普通世界节点；土也只会展开出一层终端土块。 */
   expand(node) {
-    if (node.children.length) {
-      // 兼容旧存档：必定出现的概率节点会补齐到 spawnCount 设定的最小数量。
-      (rules[node.type] || []).filter(type => NODE_TYPES[type]?.spawnChance >= 1).forEach(type => {
-        const [minimum] = spawnCountRange(NODE_TYPES[type]);
-        const missing = Math.max(0, minimum - node.children.filter(child => child.type === type).length);
-        for (let index = 0; index < missing; index++) {
-          const position = this.findPosition(node);
-          const child = new Node(type, position.x, position.y);
-          node.children.push(child);
-          this.nodes.push(child);
-          this.edges.push({ from: node, to: child });
-        }
-      });
+    if (node.worldPile) return this.expandWorldPile(node);
+    const structuralChildren = node.children.filter(child => !child.dynamic);
+    if (structuralChildren.length) {
+      // 已生成过的节点只恢复原有展开结构；概率只会在第一次展开时结算一次。
       node.open = true;
       this.showOpenDescendants(node);
+      this.resolvePendingDynamicNodes(node);
       return [];
     }
     const available = rules[node.type] || [];
     if (!available.length) return [];
 
     const created = [];
-    const count = random(3, 6);
-    // 概率子节点按“本次展开是否出现”判定；出现后按 spawnCount 生成多个同类型节点。
-    const specialChildren = available.flatMap(type => {
-      const definition = NODE_TYPES[type];
-      if (definition?.spawnChance === undefined || Math.random() >= definition.spawnChance) return [];
-      const [minimum, maximum] = spawnCountRange(definition);
-      return Array.from({ length: random(minimum, maximum) }, () => type);
+    // 每一种候选子节点都有独立随机流：调整“花”的概率，不会改变“树枝”或其他树的结果。
+    const candidates = available.filter(type => {
+      const definition = NODE_TYPES[type] || {};
+      const chance = definition.spawnChance ?? 1;
+      // 迁徙进来的动态节点不占用该父节点自身的生成名额：每个树干仍会按配置生成自己的甲虫，
+      // 因而一只外来甲虫迁入后，展开树干时可同时看到“原生甲虫 + 迁徙甲虫”。
+      return createRandomStream(`${node.generationKey}:spawn:${type}:chance`).next() < chance;
     });
-    const regularChildren = available.filter(type => NODE_TYPES[type]?.spawnChance === undefined);
-    for (let i = 0; i < Math.max(count, specialChildren.length); i++) {
-      // 先生成本轮已掷中的特殊节点，其余名额由普通子节点填充。
-      const type = i < specialChildren.length
-        ? specialChildren[i]
-        : regularChildren[Math.floor(Math.random() * regularChildren.length)];
-      const position = this.findPosition(node);
-      const child = new Node(type, position.x, position.y);
-      node.children.push(child);
-      this.nodes.push(child);
-      this.edges.push({ from: node, to: child });
-      created.push(child);
+    const staticTypes = available.filter(type => !NODE_TYPES[type]?.dynamic);
+    const generatedTypes = candidates.flatMap(type => {
+      const [minimum, maximum] = spawnCountRange(NODE_TYPES[type]);
+      const amount = createRandomStream(`${node.generationKey}:spawn:${type}:count`).integer(minimum, maximum);
+      return Array.from({ length: amount }, () => type);
+    });
+    // 树至少拥有一个静态子节点，避免只剩鸟时触发“静态父节点不能仅留动态子节点”的清理规则。
+    const minimumStatic = NODE_TYPES[node.type]?.minimumStaticChildren ?? 0;
+    while (generatedTypes.filter(type => !NODE_TYPES[type]?.dynamic).length < minimumStatic && staticTypes.length) {
+      const index = generatedTypes.filter(type => !NODE_TYPES[type]?.dynamic).length;
+      generatedTypes.push(createRandomStream(`${node.generationKey}:static-fallback:${index}`).pick(staticTypes));
     }
+    // spawnCount 是节点出现后的唯一数量来源；不再使用父节点的“凑数量”逻辑重复生成同一种节点。
+    generatedTypes.forEach(type => created.push(this.createWorldChild(node, type)));
     node.open = true;
+    // 首次展开时若已暂存迁徙鸟，也要与新生成的树枝、树干一同显示。
+    node.children.forEach(child => child.visible = true);
+    this.resolvePendingDynamicNodes(node);
     return created;
   }
 
@@ -182,9 +485,12 @@ class World {
     });
   }
 
-  /** 收起节点时隐藏后代，但保留已生成的数据。 */
+  /** 收起节点时隐藏普通后代与其地下层，但保留已生成的数据供下次展开恢复。 */
   collapse(node) {
-    const hide = current => current.children.forEach(child => { child.visible = false; hide(child); });
+    const hide = current => {
+      current.children.forEach(child => { child.visible = false; hide(child); });
+      current.underlays.forEach(layer => { layer.visible = false; hide(layer); });
+    };
     hide(node);
     node.open = false;
   }
@@ -209,14 +515,69 @@ class World {
     return this.edges.find(edge => edge.to === node)?.from || null;
   }
 
-  /** 在一条可见分支内寻找指定类型节点，用于动态节点迁徙时定位同类型父节点。 */
-  findVisibleDescendantByType(node, type) {
-    if (node.visible && node.type === type) return node;
+  /** 在已生成的分支内寻找指定类型节点；未展开节点也可作为动态迁徙的暂存目标。 */
+  findDescendantByType(node, type) {
+    if (node.type === type) return node;
     for (const child of node.children) {
-      const found = this.findVisibleDescendantByType(child, type);
+      const found = this.findDescendantByType(child, type);
       if (found) return found;
     }
     return null;
+  }
+
+  /** 根据 config.js 的 children 定义判断一个未展开分支未来能否生成所需父节点类型。 */
+  canEventuallyContainType(type, requiredType, visited = new Set()) {
+    if (type === requiredType) return true;
+    if (visited.has(type)) return false;
+    visited.add(type);
+    return (rules[type] || []).some(childType => this.canEventuallyContainType(childType, requiredType, visited));
+  }
+
+  /** 将已存在的动态节点暂存到未展开的分支，等待其未来生成所需父节点后再正式挂载。 */
+  parkDynamicNode(node, host, requiredParentType) {
+    node.pendingDynamicHost = host;
+    node.pendingParentType = requiredParentType;
+    node.visible = false;
+    node.dynamicState = null;
+    host.pendingDynamicNodes = host.pendingDynamicNodes || [];
+    host.pendingDynamicNodes.push(node);
+  }
+
+  /** 在节点展开后，把此前停靠在这里的动态节点接到刚生成的正确父节点下。 */
+  resolvePendingDynamicNodes(host) {
+    if (!host.pendingDynamicNodes?.length) return;
+    const pending = host.pendingDynamicNodes.splice(0);
+    pending.forEach(node => {
+      const parent = this.findDescendantByType(host, node.pendingParentType);
+      if (!parent || parent.dynamic) {
+        // 当前配置仍未生成目标父节点时继续停靠，不让动态节点丢失。
+        host.pendingDynamicNodes.push(node);
+        return;
+      }
+      node.pendingDynamicHost = null;
+      node.pendingParentType = null;
+      node.x = parent.x;
+      node.y = parent.y;
+      node.visible = Boolean(parent.visible && parent.open);
+      parent.children.push(node);
+      this.edges.push({ from: parent, to: node });
+    });
+  }
+
+  /** 从一条即将失效的父级分支中寻找真实父节点，或寻找可在未来生成该父节点的未展开宿主。 */
+  findMigrationDestinationFromBranch(branch, requiredParentType) {
+    let currentBranch = branch;
+    while (currentBranch) {
+      const ancestor = this.parentOf(currentBranch);
+      if (!ancestor) break;
+      for (const sibling of ancestor.children.filter(child => child !== currentBranch && !child.dynamic)) {
+        const existingParent = this.findDescendantByType(sibling, requiredParentType);
+        if (existingParent && !existingParent.dynamic) return { parent: existingParent, host: null };
+        if (this.canEventuallyContainType(sibling.type, requiredParentType)) return { parent: null, host: sibling };
+      }
+      currentBranch = ancestor;
+    }
+    return { parent: null, host: null };
   }
 
   /**
@@ -225,28 +586,47 @@ class World {
    */
   migrateDynamicNode(node, formerParent) {
     const requiredParentType = formerParent.type;
-    let branch = formerParent;
-    while (true) {
-      const ancestor = this.parentOf(branch);
-      if (!ancestor) break;
-      for (const sibling of ancestor.children.filter(child => child !== branch && child.visible)) {
-        const newParent = this.findVisibleDescendantByType(sibling, requiredParentType);
-        if (!newParent) continue;
-        formerParent.children = formerParent.children.filter(child => child !== node);
-        this.edges = this.edges.filter(edge => !(edge.from === formerParent && edge.to === node));
-        newParent.children.push(node);
-        this.edges.push({ from: newParent, to: node });
-        node.x = newParent.x;
-        node.y = newParent.y;
-        node.dynamicState = null;
-        return true;
-      }
-      branch = ancestor;
-    }
     formerParent.children = formerParent.children.filter(child => child !== node);
     this.nodes = this.nodes.filter(item => item !== node);
+    this.edges = this.edges.filter(edge => !(edge.from === formerParent && edge.to === node));
+    const destination = this.findMigrationDestinationFromBranch(formerParent, requiredParentType);
+    if (destination.parent) {
+      node.x = destination.parent.x;
+      node.y = destination.parent.y;
+      node.visible = Boolean(destination.parent.visible && destination.parent.open);
+      node.dynamicState = null;
+      destination.parent.children.push(node);
+      this.nodes.push(node);
+      this.edges.push({ from: destination.parent, to: node });
+      return true;
+    }
+    if (destination.host) {
+      // 暂存节点本身仍保留在 world.nodes 中，确保之后展开宿主时可以接回正确的父级。
+      this.nodes.push(node);
+      this.parkDynamicNode(node, destination.host, requiredParentType);
+      return true;
+    }
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
     return false;
+  }
+
+  /**
+   * 持续维护“静态父节点不能只挂动态子节点”的硬性规则。
+   * 这能覆盖复原、收起或旧状态恢复等未经过正常采集回调的路径，避免树下只剩鸟却不迁徙。
+   */
+  pruneDynamicOnlyStaticParents() {
+    const candidates = this.nodes.filter(parent => {
+      if (parent === this.root || parent.ui || parent.dynamic || !parent.children.length) return false;
+      const onlyDynamicChildren = parent.children.every(child => child.dynamic);
+      // 只有已展开的静态节点才会被清理；未展开树可暂存迁徙来的鸟，待展开时再生成自己的静态分支。
+      return onlyDynamicChildren && parent.open;
+    });
+    candidates.forEach(parent => {
+      // 前一个候选项可能已递归清理此节点，因此每次处理前重新确认它仍存在。
+      if (!this.nodes.includes(parent) || parent.children.some(child => !child.dynamic)) return;
+      parent.children.slice().filter(child => child.dynamic).forEach(child => this.migrateDynamicNode(child, parent));
+      if (this.nodes.includes(parent)) this.removeNodeAndEmptyParents(parent);
+    });
   }
 
   /** 创建固定在屏幕底部中央的三组数值资源节点；每组都可按数量拆出临时节点。 */
@@ -271,25 +651,29 @@ class World {
     Object.entries(this.resourcePiles).forEach(([type, anchor]) => {
       const detached = anchor.children.filter(item => item.detached);
       const detachedAmount = detached.reduce((sum, item) => sum + item.quantity, 0);
-      // 所有资源显示统一保留一位小数，避免 0.1 的浮点误差累积到节点数量上。
-      anchor.quantity = Math.max(0, Math.round((this.resources[type] - detachedAmount) * 10) / 10);
-      anchor.splitAmount = Math.min(anchor.splitAmount || 1, Math.max(1, anchor.quantity - 1));
+      // 所有资源显示统一保留一位小数，避免 7.00000000001 之类的浮点误差累积到输入框。
+      anchor.quantity = Math.max(0, Math.round((this.resources[type] - detachedAmount + Number.EPSILON) * 10) / 10);
+      // 资源可以保留小数余量：8.8 最多拆出 8，留下 0.8；以总量限幅可避免拆出期间把输入值错误压成 1。
+      const maximumSplit = Math.max(1, Math.floor(this.resources[type] + Number.EPSILON));
+      anchor.splitAmount = Math.min(anchor.splitAmount || 1, maximumSplit);
     });
   }
 
-  /** 将底部资源原节点按 1 为单位拆出；至少保留 1 点资源在原节点。 */
+  /** 将底部资源原节点按整数单位拆出；允许原节点保留不足 1 的小数余量。 */
   detachResourceItem(item) {
-    if (!item?.resourcePileOwner || item.detached || item.quantity <= 1) return null;
-    const rounded = Math.max(1, Math.min(Math.round(item.splitAmount || 1), Math.floor(item.quantity - 1)));
-    item.quantity = Math.round((item.quantity - rounded) * 10) / 10;
+    if (!item?.resourcePileOwner || item.detached) return null;
+    const maximum = Math.floor(item.quantity + Number.EPSILON);
+    if (maximum < 1) return null;
+    const amount = Math.max(1, Math.min(Math.round(Number(item.splitAmount) || 1), maximum));
     const detached = new Node(item.type, item.x, item.y, true);
-    detached.quantity = rounded;
+    detached.quantity = amount;
     detached.detached = true;
     detached.sourcePile = item;
     detached.resourcePileOwner = item;
     detached.isNumericPile = true;
     item.children.push(detached);
     this.uiNodes.push(detached);
+    this.syncResourcePiles();
     return detached;
   }
 
@@ -316,6 +700,12 @@ class World {
       this.resourcePiles[type].y = height - 75;
     });
     this.syncResourcePiles();
+  }
+
+  /** 窗口宽度变化时，天空始终锚定在屏幕顶端正中央。 */
+  positionSky(width) {
+    this.sky.x = width / 2;
+    this.sky.y = 75;
   }
 
   /** 每次成功采集点击先消耗饥饿，饥饿不足的部分自动扣除生命。 */
@@ -387,6 +777,8 @@ class World {
       item.detached = false;
       item.backpackItemOwner = this.backpack;
       item.isNumericPile = true;
+      // 每一只动态节点的原父级记录在背包展开时复制到该 pile，拆分时再随单独物品移动。
+      if (NODE_TYPES[type]?.dynamic) item.dynamicOrigins = [...(this.dynamicInventoryOrigins[type] || [])];
       // 背包展开物品的大小跟随世界缩放，位置仍保留在屏幕 UI 层。
       item.scalesWithWorld = true;
       this.backpack.children.push(item);
@@ -394,12 +786,33 @@ class World {
     });
   }
 
+  /** 返回某一类型目前仍被拆出、尚未归位的总数量；库存总数不在这里修改。 */
+  detachedBackpackQuantity(type) {
+    return this.backpack.children
+      .filter(item => item.type === type && item.detached)
+      .reduce((sum, item) => sum + item.quantity, 0);
+  }
+
+  /**
+   * 背包数量的唯一同步入口。
+   * 原 pile 显示数量始终等于库存总数减去同类已拆出的数量；放置、归位、拆分、进食均调用这里，
+   * 因而不会再分别做“加一”或“减一”的局部计算。
+   */
+  syncBackpackQuantity(type) {
+    const available = Math.max(0, (this.inventory[type] || 0) - this.detachedBackpackQuantity(type));
+    this.backpack.children
+      .filter(item => item.type === type && !item.detached && item.backpackItemOwner === this.backpack)
+      .forEach(item => {
+        item.quantity = available;
+        item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, available - 1));
+      });
+    return available;
+  }
+
   /** 从数值背包节点按分离条的数量拆出一个独立节点；最后一件不能拆出。 */
   detachBackpackItem(item) {
     if (!item?.backpackItemOwner || item.detached || item.quantity <= 1) return null;
     const amount = Math.max(1, Math.min(item.splitAmount || 1, item.quantity - 1));
-    item.quantity -= amount;
-    item.splitAmount = Math.min(item.splitAmount || 1, Math.max(1, item.quantity - 1));
     const detached = new Node(item.type, item.x, item.y, true);
     detached.quantity = amount;
     detached.detached = true;
@@ -408,8 +821,12 @@ class World {
     detached.backpackItemOwner = this.backpack;
     detached.isNumericPile = true;
     detached.scalesWithWorld = true;
+    if (item.dynamicOrigins) {
+      detached.dynamicOrigins = item.dynamicOrigins.splice(0, amount);
+    }
     this.backpack.children.push(detached);
     this.uiNodes.push(detached);
+    this.syncBackpackQuantity(item.type);
     return detached;
   }
 
@@ -433,27 +850,31 @@ class World {
     const anchor = item.sourcePile;
     this.backpack.children = this.backpack.children.filter(node => node !== item);
     this.uiNodes = this.uiNodes.filter(node => node !== item);
-    // inventory 才是背包物品的唯一总数；回收时根据仍在外面的拆分节点重算，不能直接 +1。
-    const remainingDetached = this.backpack.children
-      .filter(node => node.type === anchor.type && node.detached)
-      .reduce((sum, node) => sum + node.quantity, 0);
-    anchor.quantity = Math.max(0, (this.inventory[anchor.type] || 0) - remainingDetached);
-    anchor.splitAmount = Math.min(anchor.splitAmount || 1, Math.max(1, anchor.quantity - 1));
+    if (item.dynamicOrigins?.length) {
+      anchor.dynamicOrigins = [...item.dynamicOrigins, ...(anchor.dynamicOrigins || [])];
+    }
+    this.syncBackpackQuantity(anchor.type);
     return true;
   }
 
   /** 删除采集完成的节点；父节点空了会递归消失并揭示下一隐藏层。 */
   removeNodeAndEmptyParents(node) {
     const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
-    const revealed = this.revealNextUnderlay(node);
+    const revealed = this.removeReplacementHead(node);
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);
-      // 动态子节点不阻止父节点消失：先迁徙它们，再按普通空节点规则递归清理父节点。
+      // 放置到世界的数值 pile 展开后会生成逐个采集的同类子节点。
+      // 每删除一个子节点，立即按仍存在的子节点数回写容器数量；因此收起后左下角的 ×N 始终是剩余数量。
+      if (parent.worldPile) {
+        parent.quantity = parent.children.filter(child => child.worldPileChild).length;
+      }
+      // 静态父节点不能只留下动态子节点独立存在：先迁徙动态节点，再清理这个静态父节点。
       const structuralChildren = parent.children.filter(child => !child.dynamic);
-      if (structuralChildren.length === 0 && parent.open) {
+      // 山作为世界根始终保留；动态父节点不套用此规则，避免错误清理未来的动态群落节点。
+      if (parent !== this.root && !parent.dynamic && structuralChildren.length === 0 && parent.open) {
         parent.children.filter(child => child.dynamic).forEach(child => this.migrateDynamicNode(child, parent));
         this.removeNodeAndEmptyParents(parent);
       }
@@ -469,6 +890,7 @@ class World {
     const required = this.harvestClicksFor(node);
     if (node.harvestProgress < required) return { accepted: true, completed: false, required };
 
+    if (node.dynamic) this.storeDynamicOrigin(node.type, this.captureDynamicOrigin(node));
     this.inventory[node.type] = (this.inventory[node.type] || 0) + 1;
     const revealed = this.removeNodeAndEmptyParents(node);
     return { accepted: true, completed: true, revealed, required };
@@ -530,9 +952,10 @@ class World {
     item.shakeUntil = now + 180;
     if (item.detached && item.sourcePile) item.sourcePile.shakeUntil = now + 180;
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - 1);
+    if (NODE_TYPES[item.type]?.dynamic) this.consumeDynamicOrigin(item.type, item.dynamicOrigins?.shift());
     item.quantity -= 1;
+    this.syncBackpackQuantity(item.type);
     if (item.quantity <= 0) {
-      if (item.detached && item.sourcePile) item.sourcePile.splitAmount = Math.min(item.sourcePile.splitAmount || 1, Math.max(1, item.sourcePile.quantity - 1));
       // 保留最后一件到震动结束，确保被吃掉的独立节点也能显示视觉反馈。
       item.consumedUntil = now + 180;
     }
@@ -545,6 +968,7 @@ class World {
 
   /** 饥饿满值时每秒缓慢恢复生命。 */
   tick(now) {
+    this.pruneDynamicOnlyStaticParents();
     if (!this.lastTick) this.lastTick = now;
     const seconds = (now - this.lastTick) / 1000;
     this.lastTick = now;

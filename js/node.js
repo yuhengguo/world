@@ -33,7 +33,8 @@ class Node {
     this.hungerRestore = definition.hungerRestore || 0;
     this.poisonChance = definition.poisonChance || 0;
     this.poisonDamage = definition.poisonDamage || 0;
-    this.poisoned = this.poisonChance > 0 && Math.random() < this.poisonChance;
+    // 中毒判定也必须使用全局带种子的随机序列，才能在相同种子下稳定复现。
+    this.poisoned = this.poisonChance > 0 && window.TreeWorld.random.next() < this.poisonChance;
     this.durability = definition.durability ?? null;
     this.lost = false;
     // 动态节点的移动规则由独立 dynamic.js 执行，Node 仅保存配置标记。

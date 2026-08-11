@@ -29,22 +29,28 @@ class DynamicNodeController {
     // 使用节点外边缘而非中心点：范围节点只剩一个时仍有 100×60 的活动空间，不会卡在一点。
     const halfWidth = 50;
     const halfHeight = 30;
+    const staticChildren = parent.children.filter(child => child !== node && !child.dynamic && child.visible);
+    // 只剩一个静态子节点时，用类型配置额外扩大范围，避免动态节点被卡在这张卡片附近。
+    const padding = staticChildren.length === 1 ? (node.dynamic.singleStaticBoundsPadding || {}) : {};
+    const padX = Math.max(0, Number(padding.x) || 0);
+    const padY = Math.max(0, Number(padding.y) || 0);
     return {
-      minX: Math.min(...rangeNodes.map(item => item.x - halfWidth)),
-      maxX: Math.max(...rangeNodes.map(item => item.x + halfWidth)),
-      minY: Math.min(...rangeNodes.map(item => item.y - halfHeight)),
-      maxY: Math.max(...rangeNodes.map(item => item.y + halfHeight))
+      minX: Math.min(...rangeNodes.map(item => item.x - halfWidth)) - padX,
+      maxX: Math.max(...rangeNodes.map(item => item.x + halfWidth)) + padX,
+      minY: Math.min(...rangeNodes.map(item => item.y - halfHeight)) - padY,
+      maxY: Math.max(...rangeNodes.map(item => item.y + halfHeight)) + padY
     };
   }
 
   /** 随机选一个飞行方向，并在配置规定的时长后重新转向。 */
   chooseDirection(node, now) {
     const [minInterval, maxInterval] = node.dynamic.turnInterval || [650, 1500];
-    const angle = Math.random() * Math.PI * 2;
+    const random = window.TreeWorld.dynamicRandom;
+    const angle = random.next() * Math.PI * 2;
     node.dynamicState = {
       vx: Math.cos(angle) * node.dynamic.speed,
       vy: Math.sin(angle) * node.dynamic.speed,
-      turnAt: now + minInterval + Math.random() * (maxInterval - minInterval),
+      turnAt: now + minInterval + random.next() * (maxInterval - minInterval),
       lastTick: now
     };
   }
