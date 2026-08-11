@@ -74,7 +74,7 @@
   // 游戏启动后循环播放的背景音乐；volume 范围为 0 到 1。
   const BACKGROUND_MUSIC = { sound: "background.wav", volume: 0.6};
 
-  // 游戏时间与第一版昼夜表现。一个白天从太阳进入屏幕右侧开始，到离开左侧结束；夜晚暂不显示天体。
+  // 游戏时间与昼夜表现。太阳在白天、月亮在黑夜中，都会从屏幕右侧运行至左侧。
   const TIME_CONFIG = {
     dayDuration: 60,
     nightDuration: 20,
@@ -127,8 +127,9 @@
     饥饿: { emoji: "🍖", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "hunger.wav", volume: .55 },
     生命: { emoji: "❤️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "life.wav", volume: .55 },
     专注: { emoji: "🎯", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "focus.wav", volume: .55 },
-    天空: { emoji: "🌌", children: ["太阳"], spawnChance: 1, spawnCount: [1, 1], sound: "sky.wav", volume: .5 },
-    太阳: { emoji: "☀️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "sun.wav", volume: .55 }
+    天空: { emoji: "🌌", children: ["太阳", "月亮"], spawnChance: 1, spawnCount: [1, 1], sound: "sky.wav", volume: .5 },
+    太阳: { emoji: "☀️", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "sun.wav", volume: .55 },
+    月亮: { emoji: "🌙", children: [], spawnChance: 1, spawnCount: [1, 1], sound: "moon.wav", volume: .55 }
   };
 
   // 面向玩家的节点说明。新增节点时在这里补一条，即可显示在右侧详情页。
@@ -162,8 +163,9 @@
     饥饿: "你的肚子正在计数。采集会消耗它，吃东西可以补回来。",
     生命: "这是你还能继续探索的余量。饥饿耗尽后，生命会替你付账。",
     专注: "你的专注储备。先留在这里，未来它会成为更复杂行动的燃料。",
-    天空: "抬头看看天空。打开它，太阳会按照游戏中的时间穿过这片世界。",
-    太阳: "正在天空中运行的太阳。它不可以采集，只用来告诉你时间正在流逝。",
+    天空: "抬头看看天空。太阳与月亮会按照游戏时间依次穿过这片世界。",
+    太阳: "正在天空中运行的太阳。它不可以采集，只用来告诉你白天正在流逝。",
+    月亮: "正在天空中运行的月亮。它不可以采集，只用来告诉你黑夜正在流逝。",
     甲虫: "一只绿色的甲壳虫，吃了它不会感觉多饱。"
   };
 

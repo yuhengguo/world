@@ -243,11 +243,11 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
-    const sun = world.uiNodes.find(node => node.type === "太阳");
-    if (world.sky?.open && sun?.visible) {
+    // 天空只与当前可见的昼/夜天体连线；太阳与月亮不会同时出现。
+    ["太阳", "月亮"].map(type => world.uiNodes.find(node => node.type === type)).filter(node => world.sky?.open && node?.visible).forEach(celestial => {
       ctx.strokeStyle = "#777";
-      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(sun.x, sun.y); ctx.stroke();
-    }
+      ctx.beginPath(); ctx.moveTo(world.sky.x, world.sky.y); ctx.lineTo(celestial.x, celestial.y); ctx.stroke();
+    });
     this.drawBackpackLinks();
     this.drawResourceLinks();
     world.uiNodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));

@@ -35,6 +35,12 @@ class GameClock {
   dayProgress() {
     return Math.min(1, this.cycleTime() / TIME_CONFIG.dayDuration);
   }
+
+  /** 夜晚内的标准化进度：0 为月亮从右侧升起，1 为月亮到达左侧。 */
+  nightProgress() {
+    const nightTime = Math.max(0, this.cycleTime() - TIME_CONFIG.dayDuration);
+    return Math.min(1, nightTime / TIME_CONFIG.nightDuration);
+  }
 }
 
 window.TreeWorld.GameClock = GameClock;

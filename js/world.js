@@ -866,6 +866,11 @@ class World {
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);
+      // 放置到世界的数值 pile 展开后会生成逐个采集的同类子节点。
+      // 每删除一个子节点，立即按仍存在的子节点数回写容器数量；因此收起后左下角的 ×N 始终是剩余数量。
+      if (parent.worldPile) {
+        parent.quantity = parent.children.filter(child => child.worldPileChild).length;
+      }
       // 静态父节点不能只留下动态子节点独立存在：先迁徙动态节点，再清理这个静态父节点。
       const structuralChildren = parent.children.filter(child => !child.dynamic);
       // 山作为世界根始终保留；动态父节点不套用此规则，避免错误清理未来的动态群落节点。

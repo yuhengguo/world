@@ -92,10 +92,11 @@ Interaction.prototype.handleUIClick = function(node, event) {
   if (node.type === "天空") {
     const open = this.celestial?.toggleSky();
     this.audio.play(node.type);
-    this.ui.setStatus(open ? "天空已展开：太阳正在按游戏时间从右向左移动。" : "天空已收起。时间仍在流逝。");
+    this.ui.setStatus(open ? "天空已展开：太阳和月亮会按游戏时间从右向左移动。" : "天空已收起。时间仍在流逝。");
     return true;
   }
   if (node.type === "太阳") { this.ui.setStatus("太阳正在运行：它会在白天穿过屏幕，并在夜晚暂时隐去。"); return true; }
+  if (node.type === "月亮") { this.ui.setStatus("月亮正在运行：它会在黑夜穿过屏幕，并在白天暂时隐去。"); return true; }
   if (node.type === "身体") {
     if (this.handActive) this.returnHand();
     const open = this.world.toggleBody();
@@ -111,7 +112,7 @@ Interaction.prototype.handleUINodeDown = function(event) {
   const node = !this.handActive && !this.mouthActive && [...this.world.uiNodes].reverse().find(item => item.visible && this.hit(item, event));
   if (!node) return false;
   if (["手", "嘴"].includes(node.type)) return false; // 工具模块负责这两个节点。
-  if (["身体", "背包", "思考", "刷新", "天空", "太阳"].includes(node.type)) {
+  if (["身体", "背包", "思考", "刷新", "天空", "太阳", "月亮"].includes(node.type)) {
     this.handleUIClick(node, event);
     this.skipClickAfterDrag = true;
     return true;
