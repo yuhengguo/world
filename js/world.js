@@ -49,14 +49,15 @@ class World {
     // 身体固定在底栏、饥饿节点左侧，不允许被拖动。
     this.body = new Node("身体", width / 2 - 240, height - 75, true);
     this.body.fixedUI = true;
-    this.backpack = new Node("背包", 80, height / 2 + 55, true);
+    // 工作区固定入口分居屏幕上下两个区域：背包在 1/4，思考在 3/4，x 坐标保持左侧不变。
+    this.backpack = new Node("背包", 80, height / 4, true);
     // 背包分类树独立于 inventory：关闭背包后物品卡片会重建，但自定义节点与归属关系必须永久保留。
     this.backpackItemGroups = {};
     // 已归类的拆分物需要跨“关闭/重开背包”保存；每条记录代表一份独立数量与其分类位置。
     this.backpackDetachedRecords = [];
     this.nextBackpackDetachedRecordId = 1;
     this.nextCustomBackpackId = 1;
-    this.thought = new Node("思考", this.backpack.x, this.backpack.y - 105, true);
+    this.thought = new Node("思考", this.backpack.x, height * 3 / 4, true);
     this.thought.fixedUI = true;
     this.resetNode = new Node("刷新", 70, 55, true);
     this.resetNode.fixedUI = true;
@@ -326,8 +327,13 @@ class World {
    * 静态物品成为替补链新首层的容器；动态物品则逐只回归或迁徙，不走地层规则。
    */
   placeBackpackPile(item, groundNode) {
-    if (!item?.backpackItemOwner || item.detached || item.quantity < 1) return { placed: false, reason: "需要选中背包中的原始 pile。" };
-    if (this.allBackpackItems().some(node => node !== item && node.type === item.type && node.detached)) {
+    // 分类里的完整份额以 detached + groupedDetached 保存，以便它能与根背包同类 pile 共存；
+    // 它不是从来源 pile 临时拆出的物品，因此允许作为完整 pile 放置。真正临时拆出物仍禁止整叠放置。
+    const categoryPile = Boolean(item?.detached && item.groupedDetached && !item.sourcePile);
+    if (!item?.backpackItemOwner || (!categoryPile && item.detached) || item.quantity < 1) {
+      return { placed: false, reason: "需要选中背包中的完整 pile。" };
+    }
+    if (this.allBackpackItems().some(node => node !== item && node.type === item.type && node.detached && !node.groupedDetached)) {
       return { placed: false, reason: "请先收回同类已拆出的物品，再放置整叠。" };
     }
     if (NODE_TYPES[item.type]?.dynamic) return this.placeDynamicBackpackPile(item, groundNode);
@@ -344,6 +350,12 @@ class World {
     this.pushReplacementHead(groundNode, placed);
 
     this.inventory[item.type] = Math.max(0, (this.inventory[item.type] || 0) - item.quantity);
+    // 无论该 pile 是普通完整 pile，还是分类中的独立份额，只要它的直接父节点是分类，
+    // 放进世界就必须切断这条背包分类映射。世界 pile 是新的世界实体；以后重新采集时
+    // 应视为新的收获，全部先进入根背包，不能回到它放置前所在的分类。
+    if (item.backpackParent?.customNode && this.backpackItemGroups[item.type] === item.backpackParent.customId) {
+      delete this.backpackItemGroups[item.type];
+    }
     this.removeBackpackVisualItem(item);
     this.uiNodes = this.uiNodes.filter(node => node !== item);
     this.syncBackpackQuantity(item.type);
@@ -902,7 +914,7 @@ class World {
 
   /** 将当前已归类的拆分物写回持久记录；普通临时拆分物仍会在关闭背包时按旧规则归位。 */
   captureGroupedDetachedBackpackItems() {
-    this.backpackDetachedRecords = this.allBackpackItems()
+    const visibleRecords = this.allBackpackItems()
       .filter(item => item.detached && item.groupedDetached && item.quantity > 0)
       .map(item => ({
         id: item.detachedRecordId || `detached-${this.nextBackpackDetachedRecordId++}`,
@@ -911,6 +923,50 @@ class World {
         customId: item.backpackParent?.customId || null,
         dynamicOrigins: item.dynamicOrigins ? [...item.dynamicOrigins] : null
       }));
+    // 新采集前冻结的分类份额当时还没有可见的 detached 卡片；不能在下一次重建前
+    // 被这里的“可见卡片快照”覆盖掉。等它被重建为可见卡片后，才由同 id 的快照接管。
+    const visibleIds = new Set(visibleRecords.map(record => record.id));
+    const hiddenPreserved = this.backpackDetachedRecords.filter(record => !visibleIds.has(record.id));
+    this.backpackDetachedRecords = [...hiddenPreserved, ...visibleRecords];
+  }
+
+  /**
+   * 在获得同类新物品前，保留玩家已放进分类的旧 pile。
+   * inventory 记录的是同类物品总数；若直接删掉 backpackItemGroups，旧数量会在下次
+   * 背包重建时错误地跟随新收获一起回到根背包。因此这里把旧数量转为“已归类的独立份额”，
+   * 再让即将获得的新数量自然成为根背包的普通 pile。
+   */
+  preserveCategorizedPileBeforeHarvest(type) {
+    const customId = this.backpackItemGroups[type];
+    const existingQuantity = this.inventory[type] || 0;
+    if (!customId || existingQuantity <= 0) return;
+
+    // 已经是独立分类份额的记录先扣除；当前完整 pile 仅代表剩余那一部分。
+    // 例如“分类 1 有 2、分类 3 有 3”时，库存 5 里只有 2 属于当前完整 pile，
+    // 绝不能把全部 5 再冻结进分类 1，否则新采集的第 6 个会错误显示为 0。
+    const recordedQuantity = this.backpackDetachedRecords
+      .filter(record => record.type === type)
+      .reduce((sum, record) => sum + record.quantity, 0);
+    const primaryQuantity = Math.max(0, existingQuantity - recordedQuantity);
+    if (primaryQuantity <= 0) {
+      delete this.backpackItemGroups[type];
+      return;
+    }
+
+    const existingRecord = this.backpackDetachedRecords.find(record => record.type === type && record.customId === customId);
+    if (existingRecord) {
+      existingRecord.quantity += primaryQuantity;
+    } else {
+      this.backpackDetachedRecords.push({
+        id: `detached-${this.nextBackpackDetachedRecordId++}`,
+        type,
+        quantity: primaryQuantity,
+        customId,
+        // 动态来源若存在，随旧物品留在分类份额中；新捕获的动态节点会进入根背包。
+        dynamicOrigins: this.dynamicInventoryOrigins[type] ? [...this.dynamicInventoryOrigins[type]] : null
+      });
+    }
+    delete this.backpackItemGroups[type];
   }
 
   /** 关闭/重建背包前清理瞬时物品卡片，但保留自定义分类树。 */
@@ -939,7 +995,8 @@ class World {
   }
 
   /**
-   * 用库存重建背包物品卡片，同时按 backpackItemGroups 恢复它们的自定义归属。
+   * 用库存重建背包物品卡片。新采集物默认归背包根节点；只有玩家主动 Ctrl 归类后，
+   * backpackItemGroups 才会把对应 pile 恢复到自定义分类中。
    * 自定义节点对象本身不会重建，所以关闭、复原或再次打开背包都不会丢失玩家整理出的层级。
    */
   setBackpackOpen(open, viewportWidth = Infinity) {
@@ -1024,7 +1081,10 @@ class World {
 
   /** 从数值背包节点按分离条的数量拆出一个独立节点；最后一件不能拆出。 */
   detachBackpackItem(item) {
-    if (!item?.backpackItemOwner || item.detached || item.quantity <= 1) return null;
+    // 分类中的完整份额也带 detached 标记，但它没有 sourcePile，且 groupedDetached 为真；
+    // 它是可继续拆分的来源 pile，不应和临时拆出物混为一谈。
+    const categorySource = Boolean(item?.detached && item.groupedDetached && !item.sourcePile);
+    if (!item?.backpackItemOwner || (item.detached && !categorySource) || item.quantity <= 1) return null;
     const amount = Math.max(1, Math.min(item.splitAmount || 1, item.quantity - 1));
     const detached = new Node(item.type, item.x, item.y, true);
     detached.quantity = amount;
@@ -1040,6 +1100,8 @@ class World {
     detached.backpackParent = item.backpackParent || this.backpack;
     detached.backpackParent.children.push(detached);
     this.uiNodes.push(detached);
+    // 根背包的数量由 syncBackpackQuantity 统一推导；分类来源 pile 则须直接减少自身份额。
+    if (categorySource) item.quantity -= amount;
     this.syncBackpackQuantity(item.type);
     return detached;
   }
@@ -1062,6 +1124,8 @@ class World {
   mergeBackpackItem(item) {
     if (!item?.detached || !item.sourcePile) return false;
     const anchor = item.sourcePile;
+    const categorySource = Boolean(anchor.groupedDetached && !anchor.sourcePile);
+    if (categorySource) anchor.quantity += item.quantity;
     this.removeBackpackVisualItem(item);
     if (item.dynamicOrigins?.length) {
       anchor.dynamicOrigins = [...item.dynamicOrigins, ...(anchor.dynamicOrigins || [])];
@@ -1103,8 +1167,11 @@ class World {
     const required = this.harvestClicksFor(node);
     if (node.harvestProgress < required) return { accepted: true, completed: false, required };
 
+    // 先隔离分类中的旧同类物品，避免本次新收获把它们错误带回背包根节点。
+    this.preserveCategorizedPileBeforeHarvest(node.type);
     if (node.dynamic) this.storeDynamicOrigin(node.type, this.captureDynamicOrigin(node));
     this.inventory[node.type] = (this.inventory[node.type] || 0) + 1;
+    // 新收获始终归根背包；分类只由玩家的明确整理操作决定。
     const revealed = this.removeNodeAndEmptyParents(node);
     return { accepted: true, completed: true, revealed, required };
   }

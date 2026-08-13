@@ -51,13 +51,27 @@ class Interaction {
     return { x: (screenX - this.camera.x) / this.camera.scale, y: (screenY - this.camera.y) / this.camera.scale };
   }
 
+  /** 统一暴露当前黏附节点，供工作区跨层交互与未来新工具复用。 */
+  carriedNode() {
+    return this.carriedTerminal || this.carriedUIItem || this.carriedBulkPile
+      || (this.handActive && this.world.uiNodes.find(node => node.type === "手"))
+      || (this.mouthActive && this.world.uiNodes.find(node => node.type === "嘴"))
+      || null;
+  }
+
   /** 判断坐标是否命中节点；缩放型 UI 节点使用相机缩放后的尺寸。 */
   hit(node, point) {
+    // 世界终端或底部资源被暂时拖入工作区时，同样改用工作区坐标和尺寸。
+    if (node.workspaceInPanel) {
+      const local = this.workspacePanel?.toContent(point) || point;
+      return Math.abs(local.x - node.x) < NODE_SIZE.width / 2 && Math.abs(local.y - node.y) < NODE_SIZE.height / 2;
+    }
     // 工作区节点使用独立坐标系：先反算其内容坐标，再以原始卡片尺寸命中。
     if (this.workspacePanel?.isContentNode(node)) {
       // 从工作区拖出的物品暂时使用世界屏幕坐标，仍可继续点击或放置。
       if (node.workspaceFloating) {
-        return Math.abs(point.x - node.x) < NODE_SIZE.width / 2 && Math.abs(point.y - node.y) < NODE_SIZE.height / 2;
+        const scale = this.camera.scale;
+        return Math.abs(point.x - node.x) < NODE_SIZE.width * scale / 2 && Math.abs(point.y - node.y) < NODE_SIZE.height * scale / 2;
       }
       if (!this.workspacePanel.open) return false;
       if (!this.workspacePanel.scalesContentNode(node)) {
@@ -136,11 +150,12 @@ class Interaction {
   handleCanvasClick(event) {
     if (this.skipClickAfterDrag) { this.skipClickAfterDrag = false; this.dragging = false; return; }
     if (this.dragging) { this.dragging = false; return; }
-    if (this.workspacePanel?.open && this.workspacePanel.contains(event)) return;
+    // 黏附节点拥有与工作区交互的优先权；各节点自己的规则决定是否产生效果。
     if (this.handleMouthClick(event)) return;
+    if (this.handleHandClick(event)) return;
+    if (this.workspacePanel?.open && this.workspacePanel.contains(event)) return;
     const uiNode = !this.handActive && [...this.world.uiNodes].reverse().find(node => node.visible && this.hit(node, event));
     if (uiNode && this.handleUIClick(uiNode, event)) return;
-    if (this.handleHandClick(event)) return;
     this.handleWorldClick(event);
   }
 

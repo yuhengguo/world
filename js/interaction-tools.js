@@ -10,6 +10,7 @@ Interaction.prototype.returnHand = function() {
   const home = this.world.toolHomePosition("手");
   hand.x = home.x;
   hand.y = home.y;
+  hand.workspaceInPanel = false;
   this.canvas.style.cursor = "default";
   this.ui.setStatus("手已回到身体旁。");
 };
@@ -42,16 +43,26 @@ Interaction.prototype.handleToolNodeDown = function(event) {
 Interaction.prototype.moveTools = function(event) {
   if (this.handActive) {
     const hand = this.world.uiNodes.find(node => node.type === "手");
-    if (hand) { hand.x = event.clientX; hand.y = event.clientY; }
+    if (hand) {
+      hand.x = event.clientX;
+      hand.y = event.clientY;
+      // 工具始终使用屏幕坐标跟随，因此可自然进入工作区并显示在其内容之上。
+      hand.workspaceInPanel = Boolean(this.workspacePanel?.open && this.workspacePanel.contains(event));
+    }
   }
   if (this.mouthActive) {
     const mouth = this.world.uiNodes.find(node => node.type === "嘴");
-    if (mouth) { mouth.x = event.clientX; mouth.y = event.clientY; }
+    if (mouth) {
+      mouth.x = event.clientX;
+      mouth.y = event.clientY;
+      mouth.workspaceInPanel = Boolean(this.workspacePanel?.open && this.workspacePanel.contains(event));
+    }
   }
 };
 
 Interaction.prototype.handleMouthClick = function(event) {
   if (!this.mouthActive) return false;
+  // 嘴进入工作区时，依然可命中经过工作区坐标变换后的背包食物。
   const food = [...this.world.uiNodes].reverse().find(node => node.backpackItemOwner && node.edible && node.visible && this.hit(node, event));
   if (!food) return true;
   const result = this.world.eatBackpackItem(food, performance.now());
@@ -65,6 +76,8 @@ Interaction.prototype.handleMouthClick = function(event) {
 
 Interaction.prototype.handleHandClick = function(event) {
   if (!this.handActive) return false;
+  // 手尚未定义背包内部采集效果；在工作区只消耗这次点击，绝不穿透到下方世界。
+  if (this.workspacePanel?.open && this.workspacePanel.contains(event)) return true;
   if (this.world.gameOver) { this.ui.setStatus("游戏结束：请点击“重新开始”。"); return true; }
   const point = this.worldPosition(event);
   const target = [...this.world.nodes].reverse().find(node => node.visible && (this.world.isHarvestable(node) || this.world.isIndestructible(node)) && this.hit(node, point));
@@ -90,6 +103,7 @@ Interaction.prototype.cancelTool = function(event) {
     event.preventDefault();
     const mouth = this.world.uiNodes.find(node => node.type === "嘴");
     if (mouth) Object.assign(mouth, this.world.toolHomePosition("嘴"));
+    if (mouth) mouth.workspaceInPanel = false;
     this.mouthActive = false;
     this.canvas.style.cursor = "default";
     return true;

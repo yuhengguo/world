@@ -22,9 +22,21 @@ Interaction.prototype.moveSelectedNodes = function(dx, dy) {
 
 Interaction.prototype.handleCarriedTerminalDown = function(event) {
   if (!this.carriedTerminal) return false;
+  const inPanel = this.workspacePanel?.open && this.workspacePanel.contains(event);
+  // 世界终端可进入工作区进行跨层预览，但不能被放置为工作区内容；左键自动弹回原世界位置。
+  if (inPanel) {
+    this.carriedTerminal.x = this.carriedTerminalOrigin.x;
+    this.carriedTerminal.y = this.carriedTerminalOrigin.y;
+    this.carriedTerminal.workspaceInPanel = false;
+    this.carriedTerminal = null;
+    this.carriedTerminalOrigin = null;
+    this.skipClickAfterDrag = true;
+    return true;
+  }
   const point = this.worldPosition(event);
   this.carriedTerminal.x = point.x;
   this.carriedTerminal.y = point.y;
+  this.carriedTerminal.workspaceInPanel = false;
   this.carriedTerminal = null;
   this.carriedTerminalOrigin = null;
   this.skipClickAfterDrag = true;
@@ -33,9 +45,11 @@ Interaction.prototype.handleCarriedTerminalDown = function(event) {
 
 Interaction.prototype.moveCarriedTerminal = function(event) {
   if (!this.carriedTerminal) return;
-  const point = this.worldPosition(event);
+  const inPanel = this.workspacePanel?.open && this.workspacePanel.contains(event);
+  const point = inPanel ? this.workspacePanel.toContent(event) : this.worldPosition(event);
   this.carriedTerminal.x = point.x;
   this.carriedTerminal.y = point.y;
+  this.carriedTerminal.workspaceInPanel = Boolean(inPanel);
 };
 
 Interaction.prototype.cancelCarriedTerminal = function(event) {
@@ -43,6 +57,7 @@ Interaction.prototype.cancelCarriedTerminal = function(event) {
   event.preventDefault();
   this.carriedTerminal.x = this.carriedTerminalOrigin.x;
   this.carriedTerminal.y = this.carriedTerminalOrigin.y;
+  this.carriedTerminal.workspaceInPanel = false;
   this.carriedTerminal = null;
   this.carriedTerminalOrigin = null;
   return true;

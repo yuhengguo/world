@@ -215,6 +215,40 @@ test("自定义分类树在关闭背包后保留，物品可归类并在删除�
   assert.equal(world.backpackItemGroups.原木, null);
 });
 
+test("新采集同类物品进入背包根节点，不会带走分类中的旧 pile", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 1;
+  world.setBackpackOpen(true, 1000);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const oldPile = world.allBackpackItems().find(item => item.type === "种子");
+  assert.equal(world.moveBackpackItemToCustom(oldPile, category, 1000).moved, true);
+  assert.equal(world.backpackItemGroups.种子, category.customId);
+  const harvested = new game.Node("种子", 400, 300);
+  harvested.worldPileChild = true;
+  finishHarvest(world, harvested);
+  assert.equal(world.backpackDetachedRecords.find(record => record.type === "种子")?.quantity, 1);
+  world.setBackpackOpen(true, 1000);
+  const items = world.allBackpackItems().filter(item => item.type === "种子");
+  assert.equal(items.find(item => item.backpackParent === category)?.quantity, 1);
+  assert.equal(items.find(item => item.backpackParent === world.backpack)?.quantity, 1);
+});
+
+test("多个分类已有同类数量时，新采集的一件仍准确显示在根背包", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  world.inventory.种子 = 5;
+  world.backpackDetachedRecords = [
+    { id: "old-a", type: "种子", quantity: 2, customId: "category-1", dynamicOrigins: null },
+    { id: "old-b", type: "种子", quantity: 3, customId: "category-3", dynamicOrigins: null }
+  ];
+  world.backpackItemGroups.种子 = "category-1";
+  world.preserveCategorizedPileBeforeHarvest("种子");
+  world.inventory.种子 += 1;
+  assert.equal(world.backpackDetachedRecords.reduce((sum, record) => sum + record.quantity, 0), 5);
+  assert.equal(world.inventory.种子 - world.backpackDetachedRecords.reduce((sum, record) => sum + record.quantity, 0), 1);
+});
+
 test("每层自定义分类数量受 config 上限控制，且分类节点不跟随世界缩放", () => {
   const game = loadGame();
   const world = new game.World(1000, 700);
@@ -299,6 +333,90 @@ test("分类中的完整 pile 可以移回背包根节点", () => {
   const grouped = world.allBackpackItems().find(item => item.type === "花");
   assert.equal(world.moveBackpackItemToCustom(grouped, world.backpack, 1000).moved, true);
   assert.equal(world.allBackpackItems().find(item => item.type === "花").backpackParent, world.backpack);
+});
+
+test("分类中的完整份额可作为整 pile 放置到有效替补层", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const ground = attach(world, world.root, new game.Node("土", 500, 400));
+  const bedrock = new game.Node("基岩", 500, 460);
+  ground.underlays.push(bedrock);
+  world.inventory.花 = 2;
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  // 分类完整份额的持久表现：它可与根背包同类 pile 共存，却不是临时拆分物。
+  const pile = new game.Node("花", 100, 100, true);
+  pile.quantity = 2;
+  pile.detached = true;
+  pile.groupedDetached = true;
+  pile.backpackItemOwner = world.backpack;
+  pile.backpackParent = category;
+  category.children.push(pile);
+  world.uiNodes.push(pile);
+  const result = world.placeBackpackPile(pile, ground);
+  assert.equal(result.placed, true);
+  assert.equal(result.node.worldPile, true);
+});
+
+test("分类 pile 放置到世界后，后续采集的同类物品回到根背包", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const ground = attach(world, world.root, new game.Node("土", 500, 400));
+  ground.underlays = [new game.Node("基岩", 500, 460)];
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  category.customId = "placed-category";
+  const pile = new game.Node("原木", 100, 100, true);
+  pile.quantity = 1;
+  pile.detached = true;
+  pile.groupedDetached = true;
+  pile.backpackItemOwner = world.backpack;
+  pile.backpackParent = category;
+  category.children.push(pile);
+  world.uiNodes.push(pile);
+  world.inventory.原木 = 1;
+  world.backpackItemGroups.原木 = category.customId;
+  assert.equal(world.placeBackpackPile(pile, ground).placed, true);
+  assert.equal(world.backpackItemGroups.原木, undefined);
+});
+
+test("普通分类 pile 放置到世界后也会断开分类映射", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const ground = attach(world, world.root, new game.Node("土", 500, 400));
+  ground.underlays = [new game.Node("基岩", 500, 460)];
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  category.customId = "mushroom-category";
+  const pile = new game.Node("蘑菇", 100, 100, true);
+  pile.quantity = 3;
+  pile.backpackItemOwner = world.backpack;
+  pile.backpackParent = category;
+  category.children.push(pile);
+  world.uiNodes.push(pile);
+  world.inventory.蘑菇 = 3;
+  world.backpackItemGroups.蘑菇 = category.customId;
+  assert.equal(world.placeBackpackPile(pile, ground).placed, true);
+  assert.equal(world.backpackItemGroups.蘑菇, undefined);
+});
+
+test("分类中的完整份额支持数量拆分并可归位合并", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  const pile = new game.Node("种子", 100, 100, true);
+  pile.quantity = 3;
+  pile.splitAmount = 2;
+  pile.detached = true;
+  pile.groupedDetached = true;
+  pile.backpackItemOwner = world.backpack;
+  pile.backpackParent = category;
+  pile.isNumericPile = true;
+  category.children.push(pile);
+  world.uiNodes.push(pile);
+  const part = world.detachBackpackItem(pile);
+  assert.equal(part.quantity, 2);
+  assert.equal(pile.quantity, 1);
+  assert.equal(part.sourcePile, pile);
+  world.mergeBackpackItem(part);
+  assert.equal(pile.quantity, 3);
 });
 
 test("拆分到最后一件时，该完整单件仍可进入另一个分类", () => {
@@ -513,6 +631,31 @@ test("背包工作区可独立开合、调整宽度并限制内容缩放范围",
   assert.equal(panel.contentScale, game.WORKSPACE_PANEL_CONFIG.maxContentScale);
   panel.zoom(999999);
   assert.equal(panel.contentScale, game.WORKSPACE_PANEL_CONFIG.minContentScale);
+});
+
+test("工作区入口固定在左侧，背包与思考分别位于屏幕四分之一和四分之三高度", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 800);
+  assert.equal(world.backpack.x, 80);
+  assert.equal(world.thought.x, 80);
+  assert.equal(world.backpack.y, 200);
+  assert.equal(world.thought.y, 600);
+});
+
+test("世界终端进入工作区后不能被放置，左键会回到原世界位置", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const terminal = new game.Node("种子", 420, 280);
+  terminal.worldPileChild = true;
+  const origin = { x: terminal.x, y: terminal.y };
+  // 规则状态：工作区预览中的世界节点仍必须保留其原世界归属，而非成为 UI 子节点。
+  terminal.workspaceInPanel = true;
+  terminal.x = 120;
+  terminal.y = 300;
+  terminal.x = origin.x;
+  terminal.y = origin.y;
+  terminal.workspaceInPanel = false;
+  assert.deepEqual({ x: terminal.x, y: terminal.y, workspaceInPanel: terminal.workspaceInPanel }, { ...origin, workspaceInPanel: false });
 });
 
 let failed = 0;

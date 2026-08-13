@@ -62,7 +62,8 @@ class Renderer {
       ctx.fillText(`×${quantity}`, node.x - 44, node.y + 24);
       // 原节点右下角只保留直接输入数量的框；滑条已取消。
       const minimum = 1;
-      if (!node.detached && !node.worldPile && node.quantity > minimum) {
+      const categorySource = Boolean(node.groupedDetached && !node.sourcePile);
+      if ((!node.detached || categorySource) && !node.worldPile && node.quantity > minimum) {
         ctx.strokeStyle = "#8bd3ff";
         ctx.strokeRect(node.x + 1, node.y + 14, 47, 16);
         // 输入框关闭后仍显示最近确认的分离数量，让玩家知道下一次会拆出多少。
@@ -192,7 +193,7 @@ class Renderer {
   }
 
   /** 绘制独立的背包工作区；其中内容使用工作区自己的坐标缩放。 */
-  drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue) {
+  drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue, camera = { scale: 1 }) {
     const panel = this.workspacePanel;
     if (!panel) return;
     const { ctx, canvas, world } = this;
@@ -212,12 +213,23 @@ class Renderer {
         .filter(node => panel.isContentNode(node) && !panel.scalesContentNode(node) && !node.workspaceFloating && node.visible)
         // 入口位置不变，但卡片大小与工作区内容比例统一。
         .forEach(node => this.drawNode(node, hovered, handActive, now, panel.contentScale, activeBlue, allowMultipleBlue));
+      // 手与嘴跟随鼠标；进入工作区后使用工作区节点比例，但仍保持屏幕坐标与身体连线。
+      world.uiNodes
+        .filter(node => node.workspaceInPanel && ["手", "嘴"].includes(node.type) && node.visible)
+        .forEach(node => this.drawNode(node, hovered, handActive, now, panel.contentScale, activeBlue, allowMultipleBlue));
       const anchor = panel.contentAnchor();
       ctx.translate(anchor.x, anchor.y);
       ctx.scale(panel.contentScale, panel.contentScale);
       ctx.translate(-anchor.x, -anchor.y);
       world.uiNodes
         .filter(node => panel.scalesContentNode(node) && node.visible)
+        .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+      // 被拖入工作区的世界终端节点也采用工作区内容的比例与可视范围。
+      world.nodes
+        .filter(node => node.workspaceInPanel && node.visible)
+        .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+      world.uiNodes
+        .filter(node => node.workspaceInPanel && !["手", "嘴"].includes(node.type) && node.visible)
         .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
       ctx.restore();
     }
@@ -226,7 +238,8 @@ class Renderer {
     // 被玩家拖出工作区的背包物品改在世界屏幕层绘制，仍通过上方计算过的线连回来源 pile。
     world.uiNodes
       .filter(node => panel.isContentNode(node) && node.workspaceFloating && node.visible)
-      .forEach(node => this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+      // 离开工作区后完全遵循世界层缩放，视觉尺寸与当前镜头下的世界节点一致。
+      .forEach(node => this.drawNode(node, hovered, handActive, now, camera.scale, activeBlue, allowMultipleBlue));
     // 开启时 < 与 > 分开绘制；> 同时是可拖动的宽度把手。
     Object.entries(controls).forEach(([kind, box]) => {
       ctx.save();
@@ -248,13 +261,57 @@ class Renderer {
     const { ctx, world } = this;
     ctx.strokeStyle = "#777";
     Object.values(world.resourcePiles || {}).forEach(source => {
-      source.children.filter(item => item.detached).forEach(item => {
+      source.children.filter(item => item.detached && !item.workspaceInPanel).forEach(item => {
         ctx.beginPath();
         ctx.moveTo(source.x, source.y);
         ctx.lineTo(item.x, item.y);
         ctx.stroke();
       });
     });
+  }
+
+  /** 工作区中的资源拆分物在未裁切的最前景补绘连线。 */
+  drawWorkspaceResourceLinks(panel) {
+    const { ctx, world } = this;
+    ctx.strokeStyle = "#777";
+    Object.values(world.resourcePiles || {}).forEach(source => {
+      source.children.filter(item => item.detached && item.workspaceInPanel).forEach(item => {
+        const endpoint = panel.toScreen(item);
+        ctx.beginPath();
+        ctx.moveTo(source.x, source.y);
+        ctx.lineTo(endpoint.x, endpoint.y);
+        ctx.stroke();
+      });
+    });
+  }
+
+  /** 身体到手/嘴的跨层连线：工具在工作区中时在未裁切最前景补绘。 */
+  drawWorkspaceToolLinks(panel) {
+    const { ctx, world } = this;
+    ["手", "嘴"].forEach(type => {
+      const tool = world.uiNodes.find(node => node.type === type);
+      if (!tool?.visible || !tool.workspaceInPanel) return;
+      ctx.strokeStyle = "#777";
+      ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(tool.x, tool.y); ctx.stroke();
+    });
+  }
+
+  /** 世界终端悬停在工作区时的预览连线，同样必须位于最前景未裁切屏幕层。 */
+  drawWorkspaceTerminalPreviewLinks(panel) {
+    const { ctx, world } = this;
+    world.nodes.filter(node => node.workspaceInPanel && node.visible).forEach(node => {
+      const parentEdge = world.edges.find(edge => edge.to === node);
+      if (!parentEdge?.from?.visible) return;
+      const endpoint = panel.toScreen(node);
+      // 父节点位于世界坐标系，需要由当前渲染相机转换后才可连接；该方法由 draw 调用时注入。
+      const start = this.worldToScreen(parentEdge.from, this.lastCamera);
+      ctx.strokeStyle = "#777";
+      ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(endpoint.x, endpoint.y); ctx.stroke();
+    });
+  }
+
+  worldToScreen(point, camera) {
+    return { x: point.x * camera.scale + camera.x, y: point.y * camera.scale + camera.y };
   }
 
   /**
@@ -310,6 +367,7 @@ class Renderer {
     const selectedUICount = world.uiNodes.filter(node => node.selected).length;
     // 框选结束后保留的多选也视为框选特殊状态，直到玩家进行新的单节点操作。
     const allowMultipleBlue = !activeBlue && (Boolean(selectionBox) || selectedWorldCount + selectedUICount > 1);
+    this.lastCamera = camera;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     // 背景天文层必须在相机世界层之前落笔，不能与普通 UI 一起绘制到最前方。
     this.drawCelestialLayer(hovered, handActive, now, activeBlue, allowMultipleBlue);
@@ -319,31 +377,39 @@ class Renderer {
     // 仅为当前可见的节点绘制问号地下层；收起森林后，被隐藏的树不应继续露出其地下卡片。
     world.nodes.forEach(node => node.visible && this.drawHiddenChain(node));
     world.edges.forEach(edge => {
-      if (!edge.from.visible || !edge.to.visible) return;
+      if (!edge.from.visible || !edge.to.visible || edge.to.workspaceInPanel) return;
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
     });
-    world.nodes.forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
+    world.nodes
+      .filter(node => !node.workspaceInPanel)
+      .forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
     ctx.restore();
 
     const hand = world.uiNodes.find(node => node.type === "手");
-    if (hand?.visible) {
+    if (hand?.visible && !hand.workspaceInPanel) {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(hand.x, hand.y); ctx.stroke();
     }
     const mouth = world.uiNodes.find(node => node.type === "嘴");
-    if (mouth?.visible) {
+    if (mouth?.visible && !mouth.workspaceInPanel) {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(world.body.x, world.body.y); ctx.lineTo(mouth.x, mouth.y); ctx.stroke();
     }
     this.drawResourceLinks();
     // 天文节点已在背景层画完；这里仅绘制身体、背包等始终位于最前方的普通 UI。
     world.uiNodes
-      .filter(node => !node.celestialUI && !this.workspacePanel?.isContentNode(node))
+      .filter(node => !node.celestialUI && !this.workspacePanel?.isContentNode(node) && !node.workspaceInPanel)
       .forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, node.scalesWithWorld ? camera.scale : 1, activeBlue, allowMultipleBlue));
     this.drawSelectionBox(selectionBox);
     // 工作区最后绘制，因此刷新按钮、世界节点与底部 UI 都位于它的下方。
-    this.drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue);
+    this.drawWorkspacePanel(hovered, handActive, now, activeBlue, allowMultipleBlue, camera);
+    // 工作区底板已画完；跨区域线在最后的未裁切屏幕层绘制，两个端点都不会消失。
+    if (this.workspacePanel?.open) {
+      this.drawWorkspaceResourceLinks(this.workspacePanel);
+      this.drawWorkspaceToolLinks(this.workspacePanel);
+      this.drawWorkspaceTerminalPreviewLinks(this.workspacePanel);
+    }
     this.drawGameOver();
   }
 }
