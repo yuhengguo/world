@@ -11,7 +11,66 @@ Interaction.prototype.selectInBox = function() {
   const left = Math.min(start.x, end.x), right = Math.max(start.x, end.x);
   const top = Math.min(start.y, end.y), bottom = Math.max(start.y, end.y);
   const selected = this.world.nodes.filter(node => node.visible && node.x >= left && node.x <= right && node.y >= top && node.y <= bottom);
+  // 单纯点击空白仅用于取消当前操作，不应抹掉玩家已经选中的位置与移动起点。
+  if (Math.abs(end.x - start.x) < 5 && Math.abs(end.y - start.y) < 5) return;
   this.world.nodes.forEach(node => node.selected = selected.includes(node));
+  // 框选只是移动树结构，不改变角色的采集位置。
+};
+
+/** 选中世界节点，并按调用方决定是否结算一次静态节点间的移动。 */
+Interaction.prototype.selectWorldMovementNode = function(node) {
+  this.world.nodes.forEach(item => item.selected = false);
+  this.world.uiNodes.forEach(item => item.selected = false);
+  node.selected = true;
+};
+
+/** 静态节点之间的普通选择是世界移动；终端黏附和动态节点选择不会调用此方法。 */
+Interaction.prototype.moveToStaticWorldNode = function(node) {
+  const previous = this.world.nodes.includes(this.worldMovementOrigin) ? this.worldMovementOrigin : null;
+  this.selectWorldMovementNode(node);
+  if (!previous || previous === node) {
+    this.worldMovementOrigin = node;
+    this.world.playerLocation = node;
+    return;
+  }
+  const result = this.world.moveBetweenNodes(previous, node, performance.now());
+  const route = [previous, ...(result.displayPath || []).map(step => step.arriveAt)].map(item => item.customName || item.type).join(" → ");
+  const costText = `饥饿 -${result.fromHunger.toFixed(3)}`;
+  const lifeText = result.fromLife ? `，生命 -${result.fromLife.toFixed(3)}` : "";
+  this.ui.setStatus(`移动路径：${route}｜${costText}${lifeText}（总消耗 ${result.cost.toFixed(3)}）`);
+  this.worldMovementOrigin = node;
+  this.world.playerLocation = node;
+};
+
+/** 仅当手开始采集新终端时，才从最近实际停留的父节点/静态节点结算移动。 */
+Interaction.prototype.beginHarvestMovement = function(target) {
+  // playerLocation 是金色边框所表示的唯一真实位置；它比旧采集记录更可靠，也不会被手或终端拖动改变。
+  const playerPosition = this.world.nodes.includes(this.world.playerLocation) ? this.world.playerLocation : null;
+  const previousHarvestParent = this.world.nodes.includes(this.harvestMovementOrigin) ? this.harvestMovementOrigin : null;
+  const previousStaticPosition = this.world.nodes.includes(this.worldMovementOrigin) ? this.worldMovementOrigin : null;
+  const selectedStatic = this.world.nodes.find(node => node.selected && !this.world.isHarvestable(node)) || null;
+  // 手会抢走蓝色焦点，因此不能只依赖 selected；优先使用金框所在的最后真实位置，例如树干。
+  const origin = playerPosition || previousHarvestParent || previousStaticPosition || selectedStatic || this.world.root;
+  this.selectWorldMovementNode(target);
+  if (origin === target) {
+    this.harvestMovementOrigin = this.world.parentOf(target) || null;
+    this.worldMovementOrigin = this.harvestMovementOrigin;
+    this.world.playerLocation = this.harvestMovementOrigin || this.world.root;
+    this.harvestMovementDebug = "采集移动：已在当前目标位置，本次不扣移动体力。";
+    return;
+  }
+  // 采集移动显示本次完整路线，并覆盖此前路线；采集完成后仍保留到下一次有效移动。
+  const result = this.world.moveBetweenNodes(origin, target, performance.now());
+  const route = [origin, ...(result.displayPath || []).map(step => step.arriveAt)].map(item => item.customName || item.type).join(" → ");
+  const costText = `饥饿 -${result.fromHunger.toFixed(3)}`;
+  const lifeText = result.fromLife ? `，生命 -${result.fromLife.toFixed(3)}` : "";
+  this.harvestMovementDebug = `移动路径：${route}｜${costText}${lifeText}（总消耗 ${result.cost.toFixed(3)}）`;
+  if (result.gameOver) this.harvestMovementDebug = `移动路径：${route}｜生命归零，游戏结束。请点击“重新开始”。`;
+  this.ui.setStatus(this.harvestMovementDebug);
+  // 一开始采集就已经到达目标父节点；不必等资源采完才更新位置。
+  this.harvestMovementOrigin = this.world.parentOf(target) || null;
+  this.worldMovementOrigin = this.harvestMovementOrigin;
+  this.world.playerLocation = this.harvestMovementOrigin || this.world.root;
 };
 
 Interaction.prototype.moveSelectedNodes = function(dx, dy) {
@@ -67,8 +126,7 @@ Interaction.prototype.handleWorldPointerDown = function(event) {
   const point = this.worldPosition(event);
   const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
   if (!node) {
-    this.world.nodes.forEach(item => item.selected = false);
-    this.world.uiNodes.forEach(item => item.selected = false);
+    // 空白点击不再取消选中：保留蓝色节点与移动起点，避免玩家忘记自己上一次所在的位置。
     this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
     return;
   }
@@ -80,15 +138,13 @@ Interaction.prototype.handleWorldPointerDown = function(event) {
     this.wasSelectedOnDown = node.selected;
     this.selected = node;
   } else if (node.dynamic) {
-    this.world.nodes.forEach(item => item.selected = false);
-    this.world.uiNodes.forEach(item => item.selected = false);
-    node.selected = true;
+    // 动态终端的普通选择仅用于标蓝，不能把它当作一次角色移动。
+    this.selectWorldMovementNode(node);
     this.skipClickAfterDrag = true;
     return;
   } else if (this.world.isHarvestable(node)) {
-    this.world.nodes.forEach(item => item.selected = false);
-    this.world.uiNodes.forEach(item => item.selected = false);
-    node.selected = true;
+    // 普通终端拖动不代表角色移动，不改变路径高亮或饥饿。
+    this.selectWorldMovementNode(node);
     this.carriedTerminal = node;
     this.carriedTerminalOrigin = { x: node.x, y: node.y };
     this.skipClickAfterDrag = true;
@@ -188,8 +244,9 @@ Interaction.prototype.handleWorldClick = function(event) {
   }
   if (this.world.touchIndestructible(node, performance.now())) { this.ui.setStatus(`触碰到${node.type}：它无法被采集。`); return; }
   if (!this.wasSelectedOnDown) {
-    this.world.nodes.forEach(item => item.selected = false);
-    node.selected = true;
+    // 只有静态世界节点的普通选择才结算移动，例如山 → 森林。
+    if (!this.world.isHarvestable(node) && !node.dynamic) this.moveToStaticWorldNode(node);
+    else this.selectWorldMovementNode(node);
     return;
   }
   if (node.open) { this.world.collapse(node); this.audio.play(node.type); }

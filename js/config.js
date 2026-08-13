@@ -90,6 +90,11 @@
     collapsedDetailClearance: 44
   };
 
+  // 世界节点之间的“移动体力”。从深度为 d 的父节点走到其子节点，消耗 baseHungerCost / 2^d。
+  // 根节点深度为 0，因此根 → 第一层的单段成本就是 a；当前 a=.3，方便在早期探索时观察消耗而不会过快耗尽饥饿。
+  // 最近一次移动路径会持续高亮，直到玩家完成下一次跨节点移动后再被新路径覆盖。
+  const MOVEMENT_CONFIG = { baseHungerCost: .3 };
+
   // 游戏时间与昼夜表现。太阳在白天、月亮在黑夜中，都会从屏幕右侧运行至左侧。
   const TIME_CONFIG = {
     dayDuration: 60,
@@ -213,7 +218,7 @@
   };
 
   Object.assign(window.TreeWorld, {
-    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, BACKPACK_CUSTOM_CONFIG, WORKSPACE_PANEL_CONFIG, TIME_CONFIG, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
+    NODE_SIZE, ZOOM, RANDOM_SEED, random, dynamicRandom, createRandomStream, resetRandomSequences, BACKGROUND_MUSIC, BACKPACK_CUSTOM_CONFIG, WORKSPACE_PANEL_CONFIG, MOVEMENT_CONFIG, TIME_CONFIG, NODE_TYPES, NODE_DESCRIPTIONS, emoji, rules, soundFiles, soundVolumes, uiSoundFiles, uiSoundVolumes,
     HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, FINAL_HIDDEN_LAYER_TYPE, HIDDEN_LAYER_AUDIO, RESOURCE_CONFIG
   });
 })();

@@ -33,6 +33,13 @@ class Renderer {
     ctx.fillRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
     ctx.strokeStyle = "#aaa";
     ctx.strokeRect(node.x - 50, node.y - 30, NODE_SIZE.width, NODE_SIZE.height);
+    // 金色粗边框代表系统判定的玩家当前位置；它与蓝色填充的“当前选中”刻意分开表达。
+    if (this.world.playerLocation === node) {
+      ctx.strokeStyle = "#ffd54f";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(node.x - 51, node.y - 31, NODE_SIZE.width + 2, NODE_SIZE.height + 2);
+      ctx.lineWidth = 1;
+    }
     ctx.fillStyle = "white";
     ctx.font = "32px serif";
     ctx.textAlign = "center";
@@ -383,6 +390,33 @@ class Renderer {
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
     });
+    // 最近一次结算过体力的移动路径持续显示为金色，直到下一次移动路径覆盖它。
+    if (world.movementPathEdges.length) {
+      // 渲染前再做一次规则过滤，确保旧存档/热更新遗留的终端边不会被画出来。
+      world.refreshMovementPath();
+      ctx.save();
+      ctx.strokeStyle = "#ffd54f";
+      ctx.lineWidth = 3;
+      (world.movementPathSteps || []).forEach(step => {
+        const edge = step.edge;
+        if (!edge.from.visible || !edge.to.visible || world.isHarvestable(edge.to)) return;
+        ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
+        // 在每条高亮边中部画出明确的箭头，表示本次移动的实际方向，而不是父子关系的固定方向。
+        const dx = step.travelTo.x - step.travelFrom.x;
+        const dy = step.travelTo.y - step.travelFrom.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const ux = dx / length, uy = dy / length;
+        const arrowX = (step.travelFrom.x + step.travelTo.x) / 2;
+        const arrowY = (step.travelFrom.y + step.travelTo.y) / 2;
+        ctx.fillStyle = "#ffd54f";
+        ctx.beginPath();
+        ctx.moveTo(arrowX + ux * 10, arrowY + uy * 10);
+        ctx.lineTo(arrowX - ux * 8 - uy * 6, arrowY - uy * 8 + ux * 6);
+        ctx.lineTo(arrowX - ux * 8 + uy * 6, arrowY - uy * 8 - ux * 6);
+        ctx.closePath(); ctx.fill();
+      });
+      ctx.restore();
+    }
     world.nodes
       .filter(node => !node.workspaceInPanel)
       .forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));

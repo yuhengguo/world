@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { BACKPACK_CUSTOM_CONFIG, FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
+const { BACKPACK_CUSTOM_CONFIG, FINAL_HIDDEN_LAYER_TYPE, HARVEST_CLICKS_BY_TYPE, HARVEST_HUNGER_COST_BY_TYPE, HARVEST_WEAR_BY_TYPE, EAT_WEAR_BY_TYPE, HIDDEN_LAYER_TYPES, INDESTRUCTIBLE_TYPES, MOVEMENT_CONFIG, NODE_SIZE, NODE_TYPES, RESOURCE_CONFIG, rules, Node, createRandomStream, resetRandomSequences } = window.TreeWorld;
 
 /** 将 config.js 中的概率节点数量配置统一为安全的 [最小值, 最大值] 形式。 */
 const spawnCountRange = definition => {
@@ -33,12 +33,19 @@ class World {
     this.resources = Object.fromEntries(Object.entries(RESOURCE_CONFIG).map(([type, data]) => [type, data.initial]));
     this.gameOver = false;
     this.lastTick = 0;
+    // 最近一次世界移动所经过的父子边；渲染器读取它，在短时间内以高亮显示实际扣费路径。
+    this.movementPathEdges = [];
+    this.movementPathSteps = [];
+    this.movementPathStart = null;
+    this.movementPathEnd = null;
 
     // 山是不可被清空的世界根；森林、草地和岩壁等区域都会挂在它下面。
     this.root = new Node("山", width / 2, height / 2);
     // 生成路径是局部随机流的唯一地址；同一总种子下，每条分支都可独立复现。
     this.root.generationKey = "world-root";
     this.nodes.push(this.root);
+    // 系统判定的玩家当前位置：开局位于唯一世界根。它独立于蓝色选中，供路径计算与金色位置边框共同使用。
+    this.playerLocation = this.root;
 
     // 天空属于固定屏幕层：它不是山的子节点，也不会因缩放、平移或拖动而改变位置。
     this.sky = new Node("天空", width / 2, 75, true);
@@ -533,6 +540,88 @@ class World {
     return this.edges.find(edge => edge.to === node)?.from || null;
   }
 
+  /** 返回节点距唯一世界根的深度；根节点自身深度为 0。 */
+  depthOf(node) {
+    let depth = 0;
+    let current = node;
+    while (this.parentOf(current)) { depth += 1; current = this.parentOf(current); }
+    return depth;
+  }
+
+  /** 找到两个世界节点间唯一的父子路径，并记录每条边实际的行进方向。 */
+  movementPathBetween(from, to) {
+    if (!from || !to || from === to || from.ui || to.ui) return [];
+    const fromAncestors = new Set();
+    let cursor = from;
+    while (cursor) { fromAncestors.add(cursor); cursor = this.parentOf(cursor); }
+    const downwardNodes = [];
+    cursor = to;
+    while (cursor && !fromAncestors.has(cursor)) { downwardNodes.push(cursor); cursor = this.parentOf(cursor); }
+    const commonAncestor = cursor;
+    // 单根世界中两个世界节点一定存在共同祖先；保留保护分支，避免未来错误数据被错误扣费。
+    if (!commonAncestor) return [];
+    const path = [];
+    cursor = from;
+    while (cursor !== commonAncestor) {
+      const parent = this.parentOf(cursor);
+      path.push({ edge: this.edges.find(item => item.from === parent && item.to === cursor), from: parent, to: cursor, travelFrom: cursor, travelTo: parent, arriveAt: parent });
+      cursor = parent;
+    }
+    downwardNodes.reverse().forEach(child => {
+      const parent = this.parentOf(child);
+      path.push({ edge: this.edges.find(item => item.from === parent && item.to === child), from: parent, to: child, travelFrom: parent, travelTo: child, arriveAt: child });
+    });
+    return path.filter(item => item.edge);
+  }
+
+  /** 将任意饥饿成本优先从饥饿扣除，不足部分由生命承担，并统一同步底部资源节点。 */
+  consumeHungerCost(cost) {
+    const roundedCost = Math.round((cost + Number.EPSILON) * 1000) / 1000;
+    const hungerBefore = this.resources.饥饿;
+    const fromHunger = Math.min(hungerBefore, roundedCost);
+    const fromLife = Math.max(0, roundedCost - fromHunger);
+    this.resources.饥饿 = Math.round((hungerBefore - fromHunger + Number.EPSILON) * 1000) / 1000;
+    this.resources.生命 = Math.max(0, Math.round((this.resources.生命 - fromLife + Number.EPSILON) * 1000) / 1000);
+    if (this.resources.生命 <= 0) this.gameOver = true;
+    this.syncResourcePiles();
+    return { cost: roundedCost, fromHunger, fromLife, gameOver: this.gameOver };
+  }
+
+  /**
+   * 清理已随节点消失的高亮边。
+   * 采集路径可以累积，因此不能再通过一对起终点重算，否则较早的行走记录会被覆盖。
+   */
+  refreshMovementPath() {
+    // 兼容旧版本已经写入的路径记录：任何“父节点 → 当前终端”的边都不允许留在移动高亮中。
+    this.movementPathSteps = (this.movementPathSteps || []).filter(step => this.edges.includes(step.edge) && !this.isHarvestable(step.edge.to));
+    this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+  }
+
+  /** 节点消失时，若它是路径端点，就把端点退回其删除前的父节点。 */
+  replaceRemovedMovementEndpoint(node, parent) {
+    if (this.movementPathStart === node) this.movementPathStart = parent || null;
+    if (this.movementPathEnd === node) this.movementPathEnd = parent || null;
+    // 玩家所在节点被清理时，位置同步回退到删除前父节点；终端采集后自然停在父节点。
+    if (this.playerLocation === node) this.playerLocation = parent || this.root;
+  }
+
+  /** 结算两个世界节点间的移动；终端资源的最后一段既不收费，也不属于路径高亮。 */
+  moveBetweenNodes(from, to, now = performance.now()) {
+    if (this.gameOver) return { path: [], cost: 0, fromHunger: 0, fromLife: 0, gameOver: true };
+    // 终端资源只代表采集对象：无论作为起点还是终点，都先折算到父节点，不显示也不扣费。
+    const costOrigin = this.isHarvestable(from) ? this.parentOf(from) : from;
+    const costTarget = this.isHarvestable(to) ? this.parentOf(to) : to;
+    const path = costOrigin && costTarget ? this.movementPathBetween(costOrigin, costTarget) : [];
+    const cost = path.reduce((sum, step) => sum + MOVEMENT_CONFIG.baseHungerCost / (2 ** this.depthOf(step.from)), 0);
+    this.movementPathStart = costOrigin;
+    this.movementPathEnd = costTarget;
+    // 每次有效移动都完整覆盖旧路径；采集完成后这条路径会留存到下一次移动。
+    this.movementPathSteps = path.filter(step => !this.isHarvestable(step.edge.to));
+    this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+    // 路径不设时间上限：它代表玩家最近一次从哪里走到哪里，直到下一次移动才更新。
+    return { path, displayPath: path, ...this.consumeHungerCost(cost) };
+  }
+
   /** 在已生成的分支内寻找指定类型节点；未展开节点也可作为动态迁徙的暂存目标。 */
   findDescendantByType(node, type) {
     if (node.type === type) return node;
@@ -730,12 +819,7 @@ class World {
   consumeHarvestResources(node) {
     if (this.gameOver) return { cost: 0, gameOver: true };
     const cost = HARVEST_HUNGER_COST_BY_TYPE[node.type] || 1;
-    const fromHunger = Math.min(this.resources.饥饿, cost);
-    this.resources.饥饿 = Math.round((this.resources.饥饿 - fromHunger) * 10) / 10;
-    this.resources.生命 = Math.max(0, Math.round((this.resources.生命 - (cost - fromHunger)) * 10) / 10);
-    if (this.resources.生命 <= 0) this.gameOver = true;
-    this.syncResourcePiles();
-    return { cost, gameOver: this.gameOver };
+    return this.consumeHungerCost(cost);
   }
 
   /** 复原按钮调用：恢复所有资源并解除游戏结束状态，不重置世界进度。 */
@@ -1137,9 +1221,16 @@ class World {
   /** 删除采集完成的节点；父节点空了会递归消失并揭示下一隐藏层。 */
   removeNodeAndEmptyParents(node) {
     const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
+    // 替补层是被删除节点在同一位置的继任者；先记住玩家是否站在这里，便于优先转交位置。
+    const playerWasOnRemovedNode = this.playerLocation === node;
+    // 先记录删除前父节点；路径端点消失后会退回到这里，而不是留下指向已删除节点的断线。
+    this.replaceRemovedMovementEndpoint(node, parents[0] || null);
     const revealed = this.removeReplacementHead(node);
+    // 若树/矿层被清空后有替补层接替，玩家应站在新地层，而不是退回到它的父节点。
+    if (playerWasOnRemovedNode && revealed) this.playerLocation = revealed;
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
+    this.refreshMovementPath();
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);

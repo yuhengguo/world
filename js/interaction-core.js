@@ -26,6 +26,12 @@ class Interaction {
     this.handActive = false;
     this.mouthActive = false;
     this.harvestTarget = null;
+    // 最近一次静态世界节点移动后的落点；普通终端黏附不会改变它。
+    this.worldMovementOrigin = null;
+    // 角色在世界中的采集位置始终落在“上一次已采集终端的父节点”；普通选中与拖动不改变它。
+    this.harvestMovementOrigin = null;
+    // 最近一次“因采集而移动”的调试信息；采集进度提示会附在它后面，不能把路径信息覆盖掉。
+    this.harvestMovementDebug = "";
     this.carriedTerminal = null;
     this.carriedTerminalOrigin = null;
     this.carriedUIItem = null;

@@ -84,6 +84,8 @@ Interaction.prototype.handleHandClick = function(event) {
   if (!target) return true;
   if (this.world.touchIndestructible(target, performance.now())) { this.ui.setStatus(`触碰到${target.type}：它无法被采集。`); return true; }
   if (this.harvestTarget && this.harvestTarget !== target) this.harvestTarget.harvestProgress = 0;
+  // 同一目标的连续点击只推进采集进度；换目标时才结算从上一次采集父节点到新目标父节点的移动。
+  if (this.harvestTarget !== target) this.beginHarvestMovement(target);
   this.harvestTarget = target;
   this.audio.play(target.type);
   const resources = this.world.consumeHarvestResources(target);
@@ -93,8 +95,20 @@ Interaction.prototype.handleHandClick = function(event) {
   const wear = this.world.wearTool("手", this.world.toolWearFor("手", target));
   if (wear.broken) { this.handActive = false; this.canvas.style.cursor = "default"; }
   if (result.completed && this.ui.backpackOpen) this.world.setBackpackOpen(true, this.canvas.width);
-  if (!result.completed) this.ui.setStatus(`采集 ${target.type}：${target.harvestProgress}/${result.required}`);
-  else { this.harvestTarget = null; this.ui.setStatus(`已摘除 ${target.type}，已放入背包。`); }
+  const movementText = this.harvestMovementDebug ? `${this.harvestMovementDebug}｜` : "";
+  if (!result.completed) this.ui.setStatus(`${movementText}采集 ${target.type}：${target.harvestProgress}/${result.required}`);
+  else {
+    // harvest 已经删除目标及其可能空掉的父级，并在递归清理中把 playerLocation 正确回退。
+    // 此处绝不能再用已删除 target 查父节点，否则会查空并错误覆盖为山根。
+    const landing = this.world.nodes.includes(this.world.playerLocation)
+      ? this.world.playerLocation
+      : this.world.root;
+    this.worldMovementOrigin = landing;
+    this.harvestMovementOrigin = landing;
+    this.world.playerLocation = landing;
+    this.harvestTarget = null;
+    this.ui.setStatus(`${movementText}已摘除 ${target.type}，已放入背包。`);
+  }
   return true;
 };
 

@@ -61,11 +61,154 @@ function withTypeConfig(game, type, overrides, callback) {
 const tests = [];
 function test(name, callback) { tests.push({ name, callback }); }
 
+test("终端节点的最后一段既不扣移动体力，也不进入高亮路径", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const tree = attach(world, forest, new game.Node("树", 0, 0));
+  const trunk = attach(world, tree, new game.Node("树干", 0, 0));
+  const beetleA = attach(world, trunk, new game.Node("甲虫", 0, 0));
+  const beetleB = attach(world, tree, new game.Node("甲虫", 0, 0));
+  const result = world.moveBetweenNodes(beetleA, beetleB, 0);
+  // 两端都是终端：路径与费用都从甲虫A父节点树干到甲虫B父节点树。
+  // 只经过树干 → 树(1/4a)，a=.3，总成本 .075。
+  assert.equal(result.path.length, 1);
+  assert.equal(result.displayPath.length, 1);
+  assert.equal(result.cost, .075);
+  assert.equal(world.resources.饥饿, 9.925);
+  assert.equal(world.movementPathEdges.length, 1);
+});
+
+test("终端不纳入路径后，被采集移除也不会破坏其父节点为端点的高亮", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const tree = attach(world, forest, new game.Node("树", 0, 0));
+  const seed = attach(world, tree, new game.Node("种子", 0, 0));
+  world.moveBetweenNodes(forest, seed, 0);
+  assert.equal(world.movementPathEnd, tree);
+  world.removeNodeAndEmptyParents(seed);
+  assert.equal(world.movementPathEnd, tree);
+  assert.ok(world.movementPathEdges.every(edge => world.edges.includes(edge)));
+});
+
+test("采集移动在没有预选静态节点时可从唯一世界根开始结算", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const seed = attach(world, forest, new game.Node("种子", 0, 0));
+  const result = world.moveBetweenNodes(world.root, seed, 0);
+  // 只显示根 → 森林；种子最后一段既不显示也不收费。
+  assert.equal(result.displayPath.length, 1);
+  assert.equal(result.cost, .3);
+  assert.equal(world.resources.饥饿, 9.7);
+  assert.equal(world.movementPathEdges.length, 1);
+});
+
+test("采集移动会覆盖已有高亮路径，始终只保留最近一次路线", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const treeA = attach(world, forest, new game.Node("树", 0, 0));
+  const treeB = attach(world, forest, new game.Node("树", 0, 0));
+  const seed = attach(world, treeB, new game.Node("种子", 0, 0));
+  world.moveBetweenNodes(world.root, treeA, 0);
+  const firstEdge = world.movementPathEdges[0];
+  world.moveBetweenNodes(treeA, seed, 0);
+  assert.ok(!world.movementPathEdges.includes(firstEdge));
+  assert.equal(world.movementPathEdges.length, 2);
+});
+
+test("终端采集完成后，下一次静态移动可从该终端父节点继续结算", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const treeA = attach(world, forest, new game.Node("树", 0, 0));
+  const treeB = attach(world, forest, new game.Node("树", 0, 0));
+  const seed = attach(world, treeA, new game.Node("种子", 0, 0));
+  // 这里验证同步所依赖的纯规则状态：采集终端后的落点是它的父节点，树A → 树B 有两条有效路径边。
+  const harvestLanding = world.parentOf(seed);
+  const result = world.moveBetweenNodes(harvestLanding, treeB, 0);
+  assert.equal(harvestLanding, treeA);
+  assert.equal(result.path.length, 2);
+  // 树A → 森林、森林 → 树B 都由深度为 1 的森林边计费，各为 .15，共 .3。
+  assert.equal(result.cost, .3);
+});
+
+test("开始采集时优先保留最近到达的静态位置，而非被手覆盖的蓝色焦点", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const treeA = attach(world, forest, new game.Node("树", 0, 0));
+  const trunkA = attach(world, treeA, new game.Node("树干", 0, 0));
+  const treeB = attach(world, forest, new game.Node("树", 0, 0));
+  const branchB = attach(world, treeB, new game.Node("树枝", 0, 0));
+  const flower = attach(world, branchB, new game.Node("花", 0, 0));
+  // 手选中会清除树干的蓝色状态，但角色位置仍应从树干开始而非回退至根或森林。
+  const result = world.moveBetweenNodes(trunkA, flower, 0);
+  assert.equal(result.path.length, 4);
+  assert.equal(result.path.map(step => `${step.travelFrom.type}→${step.travelTo.type}`).join(" | "), "树干→树 | 树→森林 | 森林→树 | 树→树枝");
+});
+
+test("采集起点优先采用金色位置，而非较早的采集父节点", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const tree = attach(world, forest, new game.Node("树", 0, 0));
+  const trunk = attach(world, tree, new game.Node("树干", 0, 0));
+  const mushroom = attach(world, forest, new game.Node("蘑菇", 0, 0));
+  // 模拟旧采集记录停在森林，但玩家已通过静态移动到树干（金色位置）。
+  const staleHarvestParent = forest;
+  world.playerLocation = trunk;
+  const result = world.moveBetweenNodes(world.playerLocation, mushroom, 0);
+  assert.equal(staleHarvestParent, forest);
+  assert.equal(result.path.map(step => `${step.travelFrom.type}→${step.travelTo.type}`).join(" | "), "树干→树 | 树→森林");
+});
+
+test("旧的累积高亮即使误含终端边，也会在刷新时被过滤掉", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const seed = attach(world, forest, new game.Node("种子", 0, 0));
+  const terminalEdge = world.edges.find(edge => edge.to === seed);
+  world.movementPathSteps = [{ edge: terminalEdge, travelFrom: forest, travelTo: seed }];
+  world.movementPathEdges = [terminalEdge];
+  world.refreshMovementPath();
+  assert.equal(world.movementPathEdges.length, 0);
+});
+
 test("固定种子下相同生成路径使用相同随机流", () => {
   const game = loadGame();
   const first = Array.from({ length: 8 }, () => game.createRandomStream("same-branch").next());
   const second = Array.from({ length: 8 }, () => game.createRandomStream("same-branch").next());
   assert.deepEqual(first, second);
+});
+
+test("玩家位置开局位于山根，并在所在节点移除时回退到父节点", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  assert.equal(world.playerLocation, world.root);
+  world.playerLocation = forest;
+  world.removeNodeAndEmptyParents(forest);
+  assert.equal(world.playerLocation, world.root);
+});
+
+test("采集清理掉当前位置父节点时，玩家位置会递归回退而不会被错误重置为山", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  const tree = attach(world, forest, new game.Node("树", 0, 0));
+  const trunk = attach(world, tree, new game.Node("树干", 0, 0));
+  // 保留另一条静态分支，模拟截图中树在树干消失后仍然存在的情况。
+  attach(world, tree, new game.Node("树枝", 0, 0));
+  const log = attach(world, trunk, new game.Node("原木", 0, 0));
+  tree.open = true;
+  trunk.open = true;
+  world.playerLocation = trunk;
+  world.removeNodeAndEmptyParents(log);
+  // 原木清除后树干空掉并被清理，位置应继续回退到树，而非直接回到山。
+  assert.equal(world.playerLocation, tree);
 });
 
 test("spawnChance 为 0 时不会生成配置中的子节点", () => {
@@ -102,6 +245,19 @@ test("隐藏替补层接替首层时继承原来的父子连线", () => {
   assert.equal(world.parentOf(replacement), world.root);
   assert.equal(replacement.visible, true);
   assert.equal(replacement.locked, false);
+});
+
+test("玩家所在树被清空并揭示替补层时，位置优先转交给替补层", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const tree = attach(world, world.root, new game.Node("树", 400, 400));
+  tree.generationKey = "test:player-replacement";
+  world.createHiddenSoilChain(tree, 2);
+  const replacement = tree.underlays[0];
+  world.playerLocation = tree;
+  world.removeNodeAndEmptyParents(tree);
+  assert.equal(world.playerLocation, replacement);
+  assert.equal(replacement.visible, true);
 });
 
 test("有效地层必须全由矿物层通向基岩", () => {
