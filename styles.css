@@ -72,6 +72,7 @@ canvas { display: block; }
   right: 0;
   width: 280px;
   min-height: 265px;
+  max-height: 86vh;
   transform: translateY(-50%);
   border: 1px solid #7ea7bc;
   border-right: 0;
@@ -100,7 +101,8 @@ canvas { display: block; }
   cursor: pointer;
 }
 
-.detail-content { padding: 22px 22px 20px; }
+/* “节点世界”指南内容较完整；超出视口时只在详情栏内部滚动，不遮挡游戏画面。 */
+.detail-content { max-height: calc(86vh - 42px); padding: 22px 22px 20px; overflow-y: auto; box-sizing: border-box; }
 .detail-heading { display: flex; gap: 13px; align-items: center; }
 #detailEmoji { font: 42px serif; }
 #detailName { display: block; font: bold 21px "Microsoft YaHei", sans-serif; }
