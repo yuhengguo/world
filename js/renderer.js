@@ -95,7 +95,9 @@ class Renderer {
     if (hovered === node) {
       ctx.fillStyle = "#ddd";
       ctx.font = "14px Microsoft YaHei";
-      ctx.fillText(node.customNode ? node.customLabel : node.type, node.x, node.y + 48);
+      // 世界/分类节点显示玩家命名；重新采集生成的背包物品始终显示其物品类型。
+      const hoverLabel = node.backpackItemOwner ? node.type : (node.customName || (node.customNode ? node.customLabel : node.type));
+      ctx.fillText(hoverLabel, node.x, node.y + 48);
     }
     ctx.restore();
   }
@@ -218,7 +220,7 @@ class Renderer {
         .filter(node => node.workspaceInPanel && ["手", "嘴"].includes(node.type) && node.visible)
         .forEach(node => this.drawNode(node, hovered, handActive, now, panel.contentScale, activeBlue, allowMultipleBlue));
       const anchor = panel.contentAnchor();
-      ctx.translate(anchor.x, anchor.y);
+      ctx.translate(anchor.x + panel.contentOffset.x, anchor.y + panel.contentOffset.y);
       ctx.scale(panel.contentScale, panel.contentScale);
       ctx.translate(-anchor.x, -anchor.y);
       world.uiNodes

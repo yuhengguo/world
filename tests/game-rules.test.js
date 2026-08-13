@@ -620,7 +620,8 @@ test("背包工作区可独立开合、调整宽度并限制内容缩放范围",
   panel.pointerMove({ clientX: canvas.width, clientY: canvas.height / 2 });
   panel.pointerUp();
   assert.equal(panel.open, true);
-  assert.equal(panel.width, canvas.width);
+  // 完全展开时仍要为右侧收起的详情栏展开把手留下安全区域。
+  assert.equal(panel.width, panel.maximumWidth());
   const collapseResizeHandle = panel.controls().collapse;
   panel.pointerDown({ clientX: collapseResizeHandle.x + 5, clientY: collapseResizeHandle.y + 5 });
   panel.pointerMove({ clientX: 0, clientY: canvas.height / 2 });
@@ -640,6 +641,18 @@ test("工作区入口固定在左侧，背包与思考分别位于屏幕四分�
   assert.equal(world.thought.x, 80);
   assert.equal(world.backpack.y, 200);
   assert.equal(world.thought.y, 600);
+});
+
+test("世界节点与自定义分类可记录全局唯一名称", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const tree = new game.Node("树", 300, 300);
+  const category = world.createCustomBackpackNode(world.backpack, 1000);
+  tree.customName = "河边树";
+  category.customName = "蘑菇箱";
+  assert.notEqual(tree.customName, category.customName);
+  assert.equal(tree.ui, false);
+  assert.equal(category.customNode, true);
 });
 
 test("世界终端进入工作区后不能被放置，左键会回到原世界位置", () => {

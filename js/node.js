@@ -20,6 +20,8 @@ class Node {
     this.visible = true;
     this.open = false;
     this.selected = false;
+    // 玩家命名独立于 type：名称用于搜索与辨识，不改变配置、生成或采集规则。
+    this.customName = "";
     this.harvestProgress = 0;
     this.shakeUntil = 0;
 

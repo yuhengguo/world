@@ -80,7 +80,15 @@
   // 左侧背包工作区：宽度可由边缘把手拖到全屏，内容缩放与世界相机完全独立。
   // 工作区最小宽度仍会受背包/思考节点实际右边界约束，避免拖动边框压到它们身上。
   // 工作区只允许缩小内容：1 是初始大小，minContentScale 可按需要继续调小。
-  const WORKSPACE_PANEL_CONFIG = { defaultWidth: 360, minWidth: 150, maxContentScale: 1, minContentScale: .1, zoomSensitivity: .0008 };
+  const WORKSPACE_PANEL_CONFIG = {
+    defaultWidth: 360,
+    minWidth: 150,
+    maxContentScale: 1,
+    minContentScale: .1,
+    zoomSensitivity: .0008,
+    // 详情页收起时仍会在屏幕右边缘保留 35px 宽的展开把手；工作区最右边界额外留出安全距离。
+    collapsedDetailClearance: 44
+  };
 
   // 游戏时间与昼夜表现。太阳在白天、月亮在黑夜中，都会从屏幕右侧运行至左侧。
   const TIME_CONFIG = {

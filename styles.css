@@ -44,6 +44,26 @@ canvas { display: block; }
   outline: none;
 }
 
+/* 位于底部 UI 正上方的全局命名搜索；只展示与定位，不修改节点数据。 */
+#nodeSearch {
+  position: fixed;
+  z-index: 8;
+  left: 50%;
+  /* 底部资源节点的上缘约在屏幕底部 105px；这里留出一小段呼吸空间。 */
+  bottom: 122px;
+  transform: translateX(-50%);
+  width: 190px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #8bd3ff;
+  border-radius: 4px;
+  color: #fff;
+  background: #161616;
+  font: 13px "Microsoft YaHei", sans-serif;
+  outline: none;
+}
+#nodeSearch:focus { border-color: #dff4ff; box-shadow: 0 0 0 2px rgba(139, 211, 255, .2); }
+
 /* 右侧详情页不属于 Canvas：收起后仅保留箭头，展开后显示最近一次选中的节点。 */
 #nodeDetailPanel {
   position: fixed;

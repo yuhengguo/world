@@ -12,6 +12,8 @@
   <button id="restartButton" type="button" hidden>重新开始</button>
   <!-- 数值拆分输入框由 interaction.js 在点击节点右下角输入区时定位并显示。 -->
   <input id="splitInput" type="number" min="1" step="1" inputmode="decimal" hidden aria-label="拆分数量">
+  <!-- 只搜索玩家主动命名过的世界节点与自定义分类；回车后由交互模块执行聚焦。 -->
+  <input id="nodeSearch" type="search" placeholder="搜索已命名节点" aria-label="搜索已命名节点">
 
   <!-- 右侧节点详情页：由 detail-panel.js 根据当前或最近一次选择的节点更新。 -->
   <aside id="nodeDetailPanel" aria-label="节点详情">

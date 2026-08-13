@@ -106,14 +106,7 @@ Interaction.prototype.handleCustomNodeClick = function(node, event) {
       this.ui.setStatus(result.moved ? `已将 ${selectedItem.type} 归入 ${node.customLabel}。` : `无法归类：${result.reason}`);
       return;
     }
-    const entered = window.prompt("为这个自定义节点命名：", node.customLabel || "未命名分类");
-    if (entered === null) return;
-    const label = entered.trim();
-    if (!label) { this.ui.setStatus("名称不能为空，已保留原名称。"); return; }
-    node.customLabel = label;
-    this.world.uiNodes.forEach(item => item.selected = false);
-    node.selected = true;
-    this.ui.setStatus(`已将分类命名为“${label}”。`);
+    this.renameNode(node);
     return;
   }
   node.open = !node.open;

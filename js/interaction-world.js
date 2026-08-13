@@ -72,6 +72,10 @@ Interaction.prototype.handleWorldPointerDown = function(event) {
     this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
     return;
   }
+  if (event.ctrlKey && this.renameNode(node)) {
+    this.skipClickAfterDrag = true;
+    return;
+  }
   if (node.replacementLayer) {
     this.wasSelectedOnDown = node.selected;
     this.selected = node;
@@ -96,6 +100,58 @@ Interaction.prototype.handleWorldPointerDown = function(event) {
   this.down = { x: event.clientX, y: event.clientY };
   this.lastWorld = point;
   this.dragging = false;
+};
+
+/** 搜索命中世界节点时，展开正常父链并将相机移动到节点居中位置。 */
+Interaction.prototype.focusNamedNode = function(name) {
+  if (!name) { this.ui.setStatus("请输入一个已命名节点的名称。"); return false; }
+  const node = this.namedNodes().find(item => item.customName === name);
+  if (!node) { this.ui.setStatus(`未找到已命名节点“${name}”。`); return false; }
+  if (node.hiddenUnderlay || node.locked) {
+    this.ui.setStatus(`“${name}”仍在隐藏替补层中，需按地层规则逐层揭示。`);
+    return false;
+  }
+  if (!node.ui) {
+    let parent = this.world.parentOf(node);
+    while (parent) {
+      if (!parent.open) this.world.expand(parent);
+      parent = this.world.parentOf(parent);
+    }
+    node.visible = true;
+    // 搜索定位恢复节点在初始世界比例下的观看尺寸，再把它放到视野中央。
+    this.camera.scale = 1;
+    this.camera.x = this.canvas.width / 2 - node.x;
+    this.camera.y = this.canvas.height / 2 - node.y;
+  } else if (node.customNode) {
+    let parent = node.backpackParent || this.world.backpack;
+    while (parent && parent !== this.world.backpack) {
+      parent.open = true;
+      parent = parent.backpackParent;
+    }
+    if (!this.world.backpack.open) this.world.setBackpackOpen(true, this.canvas.width);
+    this.world.layoutBackpackTree(this.canvas.width);
+    node.visible = true;
+    // 分类搜索使用与世界搜索同样的“初始比例 + 中央聚焦”表现；背包和思考入口仍保持固定位置。
+    const panel = this.workspacePanel;
+    if (panel) {
+      // 工作区已经展开时保持玩家正在使用的宽度；收起时仅恢复上次宽度，不强制铺满屏幕。
+      if (!panel.open) {
+        panel.open = true;
+        panel.width = panel.lastExpandedWidth;
+      }
+      panel.clampWidth();
+      panel.contentScale = 1;
+      // 以当前工作区的中心为锚点聚焦，而非以整个屏幕为锚点。
+      const anchor = panel.contentAnchor();
+      panel.contentOffset.x = anchor.x - node.x;
+      panel.contentOffset.y = anchor.y - node.y;
+    }
+  }
+  // 搜索只负责定位，不改变当前选择或蓝色焦点；黏附节点仍按原有优先级显示。
+  this.world.nodes.forEach(item => item.selected = false);
+  this.world.uiNodes.forEach(item => item.selected = false);
+  this.ui.setStatus(`已定位“${name}”。`);
+  return true;
 };
 
 Interaction.prototype.moveWorldInteraction = function(event) {

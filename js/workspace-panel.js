@@ -39,19 +39,25 @@ class WorkspacePanel {
     return this.toScreen(node);
   }
 
-  /** 内容缩放和平移以工作区中心为原点，方便查看上、下和右侧的展开内容。 */
-  contentAnchor() { return { x: this.width / 2 + this.contentOffset.x, y: this.canvas.height / 2 + this.contentOffset.y }; }
+  /** 内容缩放以面板中心为原点，平移独立叠加，方便稳定地查看与搜索定位内容。 */
+  contentAnchor() { return { x: this.width / 2, y: this.canvas.height / 2 }; }
   toScreen(point) {
     const anchor = this.contentAnchor();
     const x = point.x ?? point.clientX;
     const y = point.y ?? point.clientY;
-    return { x: anchor.x + (x - anchor.x) * this.contentScale, y: anchor.y + (y - anchor.y) * this.contentScale };
+    return {
+      x: anchor.x + (x - anchor.x) * this.contentScale + this.contentOffset.x,
+      y: anchor.y + (y - anchor.y) * this.contentScale + this.contentOffset.y
+    };
   }
   toContent(point) {
     const anchor = this.contentAnchor();
     const x = point.x ?? point.clientX;
     const y = point.y ?? point.clientY;
-    return { x: anchor.x + (x - anchor.x) / this.contentScale, y: anchor.y + (y - anchor.y) / this.contentScale };
+    return {
+      x: anchor.x + (x - anchor.x - this.contentOffset.x) / this.contentScale,
+      y: anchor.y + (y - anchor.y - this.contentOffset.y) / this.contentScale
+    };
   }
 
   /** 展开时占据左侧区域；收起时只保留贴在左边缘的 > 按钮。 */
@@ -64,6 +70,17 @@ class WorkspacePanel {
   minimumWidth() {
     const rightEdge = Math.max(this.world.backpack.x + 50, this.world.thought.x + 50);
     return Math.max(WORKSPACE_PANEL_CONFIG.minWidth, rightEdge + 15);
+  }
+  /** 工作区即使完全展开，也要避开右侧详情页收起后仍保留的展开把手。 */
+  maximumWidth() {
+    return Math.max(this.minimumWidth(), this.canvas.width - WORKSPACE_PANEL_CONFIG.collapsedDetailClearance);
+  }
+  /** 供窗口缩放和外部定位统一调用，保证当前与记忆宽度都落在合法范围内。 */
+  clampWidth() {
+    const minimum = this.minimumWidth();
+    const maximum = this.maximumWidth();
+    this.width = Math.max(minimum, Math.min(maximum, this.width));
+    this.lastExpandedWidth = Math.max(minimum, Math.min(maximum, this.lastExpandedWidth));
   }
   /** 开启时边框同时显示 <（收起/拖宽）与 >（恢复/拖宽）；收起后仅显示 >。 */
   controls() {
@@ -101,7 +118,7 @@ class WorkspacePanel {
   }
   pointerMove(event) {
     if (!this.resizing) return false;
-    const next = Math.max(this.minimumWidth(), Math.min(this.canvas.width, event.clientX));
+    const next = Math.max(this.minimumWidth(), Math.min(this.maximumWidth(), event.clientX));
     if (Math.abs(next - this.width) > 4) this.dragMoved = true;
     this.width = next;
     this.open = true;
@@ -120,7 +137,7 @@ class WorkspacePanel {
     }
     if (!this.dragMoved) {
       this.open = true;
-      this.width = Math.max(this.minimumWidth(), Math.min(this.canvas.width, this.lastExpandedWidth));
+      this.width = Math.max(this.minimumWidth(), Math.min(this.maximumWidth(), this.lastExpandedWidth));
     }
     return true;
   }

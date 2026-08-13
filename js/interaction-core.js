@@ -35,6 +35,7 @@ class Interaction {
     this.carriedBulkPileOrigin = null;
     this.placeKeyHeld = false;
     this.quantityInput = document.getElementById("splitInput");
+    this.nodeSearch = document.getElementById("nodeSearch");
     this.quantityInputNode = null;
     this.dragging = false;
     this.middle = false;
@@ -57,6 +58,38 @@ class Interaction {
       || (this.handActive && this.world.uiNodes.find(node => node.type === "手"))
       || (this.mouthActive && this.world.uiNodes.find(node => node.type === "嘴"))
       || null;
+  }
+
+  /** 世界节点与自定义分类是唯一可命名对象；临时拆分物和固定 UI 均不参与。 */
+  isNameableNode(node) {
+    return Boolean(node && (!node.ui || node.customNode));
+  }
+
+  /** 查询所有明确由玩家命名的节点，供重名检查与全局搜索共享。 */
+  namedNodes() {
+    return [...this.world.nodes, ...this.world.uiNodes]
+      .filter(node => this.isNameableNode(node) && node.customName);
+  }
+
+  /** Ctrl 点击的统一命名入口；拒绝空白与任何全局重名。 */
+  renameNode(node) {
+    if (!this.isNameableNode(node)) return false;
+    const entered = window.prompt("为这个节点命名：", node.customName || "");
+    if (entered === null) return true;
+    const name = entered.trim();
+    if (!name) { this.ui.setStatus("名称不能为空，已保留原名称。"); return true; }
+    if (this.namedNodes().some(other => other !== node && other.customName === name)) {
+      this.ui.setStatus(`命名失败：“${name}”已被其它节点使用。`);
+      return true;
+    }
+    node.customName = name;
+    // 分类原有显示字段与通用命名字段保持同步，避免分类卡片仍显示旧名称。
+    if (node.customNode) node.customLabel = name;
+    this.world.nodes.forEach(item => item.selected = false);
+    this.world.uiNodes.forEach(item => item.selected = false);
+    node.selected = true;
+    this.ui.setStatus(`已将${node.type}命名为“${name}”。`);
+    return true;
   }
 
   /** 判断坐标是否命中节点；缩放型 UI 节点使用相机缩放后的尺寸。 */
@@ -100,6 +133,18 @@ class Interaction {
   /** 集中注册浏览器事件，并按“视角 → UI → 工具 → 世界”的优先级分发。 */
   bind() {
     this.bindQuantityInput();
+    this.nodeSearch?.addEventListener("keydown", event => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      this.focusNamedNode(this.nodeSearch.value.trim());
+    });
+    // 浏览器原生 Ctrl+F 会打开页面查找；游戏中优先把焦点交给节点名称搜索框。
+    window.addEventListener("keydown", event => {
+      if (!event.ctrlKey || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      this.nodeSearch?.focus();
+      this.nodeSearch?.select();
+    });
 
     this.canvas.addEventListener("mousedown", event => {
       if (this.workspacePanel?.pointerDown(event)) { event.preventDefault(); return; }

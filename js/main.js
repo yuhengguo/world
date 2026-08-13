@@ -51,7 +51,8 @@ window.addEventListener("resize", () => {
   // UI 使用屏幕坐标并由用户拖动决定位置；窗口缩放不会重置它们。
   world.positionResourcePiles(canvas.width, canvas.height);
   world.positionSky(canvas.width);
-  workspacePanel.width = Math.min(workspacePanel.width, canvas.width);
+  // 视口变窄时也维持右侧详情栏收起把手的安全空间。
+  workspacePanel.clampWidth();
 });
 
 /** requestAnimationFrame 驱动 Canvas 持续重绘，以显示颤动与悬停状态。 */
