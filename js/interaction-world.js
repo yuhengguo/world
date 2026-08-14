@@ -126,7 +126,8 @@ Interaction.prototype.handleWorldPointerDown = function(event) {
   const point = this.worldPosition(event);
   const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
   if (!node) {
-    // 空白点击不再取消选中：保留蓝色节点与移动起点，避免玩家忘记自己上一次所在的位置。
+    // 左键落在世界空白处时只清掉蓝色选择；金色路径和角色真实位置仍保持不变。
+    this.clearAllNodeSelections();
     this.selectionBox = { start: { x: event.clientX, y: event.clientY }, end: { x: event.clientX, y: event.clientY } };
     return;
   }

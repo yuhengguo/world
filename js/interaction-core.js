@@ -66,6 +66,20 @@ class Interaction {
       || null;
   }
 
+  /**
+   * 清除普通选择外观，不触碰玩家真实位置、金色移动路径或详情页的最近查看记录。
+   * 框选状态另由 world 模块在拖拽结束后重新写入，因此空白处按下后仍可正常开始框选。
+   */
+  clearAllNodeSelections() {
+    [...this.world.nodes, ...this.world.uiNodes].forEach(node => {
+      node.selected = false;
+      node.pileGroupSelected = false;
+    });
+    this.selected = null;
+    this.selectedUI = null;
+    this.wasSelectedOnDown = false;
+  }
+
   /** 世界节点与自定义分类是唯一可命名对象；临时拆分物和固定 UI 均不参与。 */
   isNameableNode(node) {
     return Boolean(node && (!node.ui || node.customNode));
@@ -163,6 +177,8 @@ class Interaction {
       if (this.handleToolNodeDown(event)) return;
       if (this.handleUINodeDown(event)) return;
       if (this.workspacePanel?.open && this.workspacePanel.contains(event)) {
+        // 工作区空白也属于真正空白处：取消蓝色选择，但不影响路径与详情记录。
+        if (!this.carriedNode()) this.clearAllNodeSelections();
         this.workspacePanel.active = true;
         return;
       }
@@ -204,7 +220,11 @@ class Interaction {
     // 黏附节点拥有与工作区交互的优先权；各节点自己的规则决定是否产生效果。
     if (this.handleMouthClick(event)) return;
     if (this.handleHandClick(event)) return;
-    if (this.workspacePanel?.open && this.workspacePanel.contains(event)) return;
+    if (this.workspacePanel?.open && this.workspacePanel.contains(event)) {
+      // 鼠标按下阶段未命中工作区节点才会走到这里，因此可安全视为工作区空白点击。
+      if (!this.carriedNode()) this.clearAllNodeSelections();
+      return;
+    }
     const uiNode = !this.handActive && [...this.world.uiNodes].reverse().find(node => node.visible && this.hit(node, event));
     if (uiNode && this.handleUIClick(uiNode, event)) return;
     this.handleWorldClick(event);

@@ -148,6 +148,9 @@ class World {
     next.locked = false;
     if (!this.nodes.includes(next)) this.nodes.push(next);
     const inheritedParents = this.replaceInParents(node, next);
+    // 替补不是一次新的移动：若玩家或最近路径正停在旧首层，直接把记录交给新首层，
+    // 使金色边框与金色连线在不扣额外饥饿的情况下保持连续。
+    this.inheritReplacementMovement(node, next, inheritedParents);
     // 没有父级连接的孤立节点才回退挂到世界根，保证替补节点仍可见、可操作。
     if (!inheritedParents.length && !this.root.children.includes(next)) {
       this.root.children.push(next);
@@ -605,6 +608,35 @@ class World {
   refreshMovementPath() {
     // 兼容旧版本已经写入的路径记录：任何“父节点 → 当前终端”的边都不允许留在移动高亮中。
     this.movementPathSteps = (this.movementPathSteps || []).filter(step => this.edges.includes(step.edge) && !this.isHarvestable(step.edge.to));
+    this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+  }
+
+  /**
+   * 替补层接手一个已删除节点时，继承与该节点相关的移动记录。
+   * 这里只替换原本确实存在于最近路径中的“父 → 旧首层”边；普通地下层揭示
+   * 不会凭空生成金色路线。替补交接本身没有移动成本，也不会调用扣除饥饿的方法。
+   */
+  inheritReplacementMovement(removed, replacement, parents = []) {
+    const parentSet = new Set(parents);
+    const replacementEdges = this.edges.filter(edge => parentSet.has(edge.from) && edge.to === replacement);
+    const replaceNode = value => value === removed ? replacement : value;
+    this.movementPathSteps = (this.movementPathSteps || []).map(step => {
+      // replaceInParents 只会把“父 → 旧节点”重连为“父 → 替补节点”；其它路径边不能猜测替换。
+      if (step.edge?.to !== removed || !parentSet.has(step.edge.from)) return step;
+      const replacementEdge = replacementEdges.find(edge => edge.from === step.edge.from);
+      if (!replacementEdge) return step;
+      return {
+        ...step,
+        edge: replacementEdge,
+        to: replacement,
+        travelFrom: replaceNode(step.travelFrom),
+        travelTo: replaceNode(step.travelTo),
+        arriveAt: replaceNode(step.arriveAt)
+      };
+    });
+    if (this.movementPathStart === removed) this.movementPathStart = replacement;
+    if (this.movementPathEnd === removed) this.movementPathEnd = replacement;
+    if (this.playerLocation === removed) this.playerLocation = replacement;
     this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
   }
 
@@ -1233,13 +1265,10 @@ class World {
   /** 删除采集完成的节点；父节点空了会递归消失并揭示下一隐藏层。 */
   removeNodeAndEmptyParents(node) {
     const parents = this.edges.filter(edge => edge.to === node).map(edge => edge.from);
-    // 替补层是被删除节点在同一位置的继任者；先记住玩家是否站在这里，便于优先转交位置。
-    const playerWasOnRemovedNode = this.playerLocation === node;
-    // 先记录删除前父节点；路径端点消失后会退回到这里，而不是留下指向已删除节点的断线。
-    this.replaceRemovedMovementEndpoint(node, parents[0] || null);
     const revealed = this.removeReplacementHead(node);
-    // 若树/矿层被清空后有替补层接替，玩家应站在新地层，而不是退回到它的父节点。
-    if (playerWasOnRemovedNode && revealed) this.playerLocation = revealed;
+    // 没有替补时，才按普通删除规则把路径端点和位置退回到原父节点。
+    // 有替补时已由 inheritReplacementMovement 完成无消耗的连续交接。
+    if (!revealed) this.replaceRemovedMovementEndpoint(node, parents[0] || null);
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
     this.refreshMovementPath();

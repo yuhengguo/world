@@ -260,6 +260,27 @@ test("玩家所在树被清空并揭示替补层时，位置优先转交给替�
   assert.equal(replacement.visible, true);
 });
 
+test("替补层接管当前路径端点时继承金色路径而不额外扣体力", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const tree = attach(world, world.root, new game.Node("树", 400, 400));
+  tree.generationKey = "test:replacement-path";
+  world.createHiddenSoilChain(tree, 2);
+  const replacement = tree.underlays[0];
+  world.moveBetweenNodes(world.root, tree, 0);
+  world.playerLocation = tree;
+  const hungerAfterMove = world.resources.饥饿;
+
+  world.removeNodeAndEmptyParents(tree);
+  const inheritedEdge = world.edges.find(edge => edge.from === world.root && edge.to === replacement);
+
+  assert.equal(world.playerLocation, replacement);
+  assert.equal(world.movementPathEnd, replacement);
+  assert.equal(world.movementPathSteps.length, 1);
+  assert.equal(world.movementPathSteps[0].edge, inheritedEdge);
+  assert.equal(world.resources.饥饿, hungerAfterMove);
+});
+
 test("有效地层必须全由矿物层通向基岩", () => {
   const game = loadGame();
   const world = new game.World(1000, 700);
