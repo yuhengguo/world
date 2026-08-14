@@ -93,7 +93,13 @@
   // 世界节点之间的“移动体力”。从深度为 d 的父节点走到其子节点，消耗 baseHungerCost / 2^d。
   // 根节点深度为 0，因此根 → 第一层的单段成本就是 a；当前 a=.3，方便在早期探索时观察消耗而不会过快耗尽饥饿。
   // 最近一次移动路径会持续高亮，直到玩家完成下一次跨节点移动后再被新路径覆盖。
-  const MOVEMENT_CONFIG = { baseHungerCost: .3 };
+  const MOVEMENT_CONFIG = {
+    baseHungerCost: .3,
+    // 是否在每条可通行的世界父子边上显示固定移动消耗；终端资源的最后一段永远免费，因此不显示数值。
+    showEdgeCosts: true,
+    // 连线消耗标签的屏幕字号。标签会抵消相机缩放，便于远近观察时都能辨认。
+    edgeCostLabelSize: 11
+  };
 
   // 游戏时间与昼夜表现。太阳在白天、月亮在黑夜中，都会从屏幕右侧运行至左侧。
   const TIME_CONFIG = {

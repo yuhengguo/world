@@ -548,6 +548,17 @@ class World {
     return depth;
   }
 
+  /**
+   * 返回一条世界父子边的固定移动消耗。
+   * 成本只由父节点深度决定：父深度 d 时为 a / 2^d。终端资源仅是采集目标，
+   * 它与父节点之间的最后一段既不移动收费也不应显示费用，统一返回 null。
+   */
+  movementCostForEdge(edge) {
+    if (!edge || !edge.from || !edge.to || this.isHarvestable(edge.to)) return null;
+    const cost = MOVEMENT_CONFIG.baseHungerCost / (2 ** this.depthOf(edge.from));
+    return Math.round((cost + Number.EPSILON) * 1000) / 1000;
+  }
+
   /** 找到两个世界节点间唯一的父子路径，并记录每条边实际的行进方向。 */
   movementPathBetween(from, to) {
     if (!from || !to || from === to || from.ui || to.ui) return [];
@@ -612,7 +623,8 @@ class World {
     const costOrigin = this.isHarvestable(from) ? this.parentOf(from) : from;
     const costTarget = this.isHarvestable(to) ? this.parentOf(to) : to;
     const path = costOrigin && costTarget ? this.movementPathBetween(costOrigin, costTarget) : [];
-    const cost = path.reduce((sum, step) => sum + MOVEMENT_CONFIG.baseHungerCost / (2 ** this.depthOf(step.from)), 0);
+    // 路径结算和画在每条边上的数值必须共用同一套公式，避免配置变化后“显示”和“实际扣除”不一致。
+    const cost = path.reduce((sum, step) => sum + (this.movementCostForEdge(step.edge) || 0), 0);
     this.movementPathStart = costOrigin;
     this.movementPathEnd = costTarget;
     // 每次有效移动都完整覆盖旧路径；采集完成后这条路径会留存到下一次移动。

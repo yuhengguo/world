@@ -4,7 +4,7 @@
  */
 
 (() => {
-const { emoji, HARVEST_CLICKS_BY_TYPE, NODE_SIZE } = window.TreeWorld;
+const { emoji, HARVEST_CLICKS_BY_TYPE, MOVEMENT_CONFIG, NODE_SIZE } = window.TreeWorld;
 
 class Renderer {
   constructor(canvas, world, ui, workspacePanel = null) {
@@ -13,6 +13,35 @@ class Renderer {
     this.world = world;
     this.ui = ui;
     this.workspacePanel = workspacePanel;
+  }
+
+  /**
+   * 在世界边的中点旁标出固定移动成本。文字在相机缩放后保持稳定的屏幕大小，
+   * 箭头仍留在连线正中，二者错开以同时表现“方向”和“消耗”。
+   */
+  drawMovementCostLabel(edge, cameraScale, highlighted = false) {
+    const { ctx, world } = this;
+    if (!MOVEMENT_CONFIG.showEdgeCosts) return;
+    const cost = world.movementCostForEdge(edge);
+    if (cost === null) return;
+    const label = String(cost);
+    const dx = edge.to.x - edge.from.x;
+    const dy = edge.to.y - edge.from.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const midpointX = (edge.from.x + edge.to.x) / 2;
+    const midpointY = (edge.from.y + edge.to.y) / 2;
+    // 始终在同一侧轻微偏移，避免覆盖连线本身与路径方向箭头。
+    const offset = 12 / cameraScale;
+    const x = midpointX - (dy / length) * offset;
+    const y = midpointY + (dx / length) * offset;
+    const fontSize = (MOVEMENT_CONFIG.edgeCostLabelSize || 11) / cameraScale;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px Microsoft YaHei`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = highlighted ? "#ffd54f" : "#b8b8b8";
+    ctx.fillText(label, x, y);
+    ctx.restore();
   }
 
   /** 绘制普通节点；采集颤动仅作用于这个节点自身的视觉内容。 */
@@ -389,6 +418,8 @@ class Renderer {
       if (!edge.from.visible || !edge.to.visible || edge.to.workspaceInPanel) return;
       ctx.strokeStyle = "#777";
       ctx.beginPath(); ctx.moveTo(edge.from.x, edge.from.y); ctx.lineTo(edge.to.x, edge.to.y); ctx.stroke();
+      // 所有非终端世界边在初始化时就展示固定成本，不必等玩家走过才出现。
+      this.drawMovementCostLabel(edge, camera.scale);
     });
     // 最近一次结算过体力的移动路径持续显示为金色，直到下一次移动路径覆盖它。
     if (world.movementPathEdges.length) {
@@ -414,6 +445,8 @@ class Renderer {
         ctx.lineTo(arrowX - ux * 8 - uy * 6, arrowY - uy * 8 + ux * 6);
         ctx.lineTo(arrowX - ux * 8 + uy * 6, arrowY - uy * 8 - ux * 6);
         ctx.closePath(); ctx.fill();
+        // 当前实际走过的边覆盖为金色数值，与金色路径线和箭头保持一致。
+        this.drawMovementCostLabel(edge, camera.scale, true);
       });
       ctx.restore();
     }
