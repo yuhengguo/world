@@ -194,6 +194,23 @@ test("玩家位置开局位于山根，并在所在节点移除时回退到父�
   assert.equal(world.playerLocation, world.root);
 });
 
+test("身体始终以独立附属关系跟随当前玩家节点，不写入世界父子边", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 0, 0));
+  assert.equal(world.body.fixedUI, true);
+  assert.equal(world.body.playerAttached, true);
+  assert.equal(world.body.open, false);
+  assert.equal(world.bodyAttachmentTarget(), world.root);
+  assert.equal(world.edges.some(edge => edge.to === world.body), false);
+  world.playerLocation = forest;
+  assert.equal(world.bodyAttachmentTarget(), forest);
+  world.bodyAttachmentOffset.x = 20;
+  world.resetUIPositions();
+  assert.equal(world.bodyAttachmentOffset.x, -88);
+  assert.equal(world.bodyAttachmentOffset.y, 72);
+});
+
 test("采集清理掉当前位置父节点时，玩家位置会递归回退而不会被错误重置为山", () => {
   const game = loadGame();
   const world = new game.World(1000, 700);

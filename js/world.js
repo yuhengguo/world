@@ -52,10 +52,17 @@ class World {
     this.sky.fixedUI = true;
     this.sky.celestialUI = true;
 
-    // UI 使用屏幕坐标：初始化在左侧中部，永远不受世界相机缩放影响。
-    // 身体固定在底栏、饥饿节点左侧，不允许被拖动。
-    this.body = new Node("身体", width / 2 - 240, height - 75, true);
+    // 身体仍是 UI 节点，避免进入普通世界 children/edges 后干扰采集、路径与父节点清理；
+    // 但它在视觉和语义上始终附着到 playerLocation，成为当前金色节点的直接附属节点。
+    this.body = new Node("身体", width / 2, height / 2, true);
     this.body.fixedUI = true;
+    this.body.playerAttached = true;
+    // 明确保留“开局收起”：手与嘴只会在玩家首次点击身体后出现。
+    this.body.open = false;
+    // 身体与手、嘴同样随世界镜头缩放；实际屏幕位置由渲染器每帧根据 playerLocation 同步。
+    this.body.scalesWithWorld = true;
+    // 拖动身体改变的是相对当前金色节点的偏移（世界单位），而不是取消身体的玩家附属关系。
+    this.bodyAttachmentOffset = { x: -88, y: 72 };
     // 工作区固定入口分居屏幕上下两个区域：背包在 1/4，思考在 3/4，x 坐标保持左侧不变。
     this.backpack = new Node("背包", 80, height / 4, true);
     // 背包分类树独立于 inventory：关闭背包后物品卡片会重建，但自定义节点与归属关系必须永久保留。
@@ -68,9 +75,9 @@ class World {
     this.thought.fixedUI = true;
     this.resetNode = new Node("刷新", 70, 55, true);
     this.resetNode.fixedUI = true;
-    // 保存初始化坐标，复原按钮只需读取这里即可恢复 UI。
+    // 保存可复原 UI 的初始化坐标；身体由玩家位置驱动，不参与“复原坐标”。
     this.initialUIPositions = {
-      body: { x: this.body.x, y: this.body.y },
+      bodyAttachmentOffset: { ...this.bodyAttachmentOffset },
       backpack: { x: this.backpack.x, y: this.backpack.y }
     };
     this.uiNodes.push(this.sky, this.body, this.backpack, this.thought, this.resetNode);
@@ -780,11 +787,11 @@ class World {
     });
   }
 
-  /** 创建固定在屏幕底部中央的三组数值资源节点；每组都可按数量拆出临时节点。 */
+  /** 创建固定在屏幕底部、以全局搜索框中心为基准左右对称的三组数值资源节点。 */
   createResourcePiles(width, height) {
     this.resourcePiles = {};
     ["饥饿", "生命", "专注"].forEach((type, index) => {
-      const anchor = new Node(type, width / 2 + (index - 1) * 160 + 80, height - 75, true);
+      const anchor = new Node(type, width / 2 + (index - 1) * 160, height - 75, true);
       anchor.fixedUI = true;
       anchor.visible = true;
       anchor.quantity = this.resources[type];
@@ -844,10 +851,10 @@ class World {
     return true;
   }
 
-  /** 窗口尺寸变化时重新把固定资源 pile 锚定到屏幕下方中央。 */
+  /** 窗口尺寸变化时重新以搜索框所在的屏幕正中为基准，左右对称锚定底部资源节点。 */
   positionResourcePiles(width, height) {
     ["饥饿", "生命", "专注"].forEach((type, index) => {
-      this.resourcePiles[type].x = width / 2 + (index - 1) * 160 + 80;
+      this.resourcePiles[type].x = width / 2 + (index - 1) * 160;
       this.resourcePiles[type].y = height - 75;
     });
     this.syncResourcePiles();
@@ -889,10 +896,20 @@ class World {
 
   /** 将身体、背包以及其 UI 子节点一起移动回最初的屏幕坐标。 */
   resetUIPositions() {
-    const body = this.initialUIPositions.body;
     const backpack = this.initialUIPositions.backpack;
-    this.moveUI(this.body, body.x - this.body.x, body.y - this.body.y);
+    // 身体允许拖动，但复原仍把它放回当前玩家节点左下方的默认相对位置。
+    Object.assign(this.bodyAttachmentOffset, this.initialUIPositions.bodyAttachmentOffset);
     this.moveUI(this.backpack, backpack.x - this.backpack.x, backpack.y - this.backpack.y);
+  }
+
+  /**
+   * 返回身体当前附着的玩家节点。它是一条独立的“角色附属关系”，绝不写进世界 edges，
+   * 因而不会产生移动体力、阻碍树清空或被误判为地下替补层。
+   */
+  bodyAttachmentTarget() {
+    return this.nodes.includes(this.playerLocation) && this.playerLocation.visible
+      ? this.playerLocation
+      : this.root;
   }
 
   /** 返回背包自定义分类树中的所有分类节点，顺序与玩家创建顺序一致。 */
@@ -1322,6 +1339,8 @@ class World {
         const tool = new Node(type, position.x, position.y, true);
         // 工具位置属于屏幕 UI，但图标和卡片尺寸跟随世界缩放，形成与世界的视觉关联。
         tool.scalesWithWorld = true;
+        // 未被鼠标携带时，工具跟随身体的展开位置；进入工作区或跟随光标时会暂时关闭该标记。
+        tool.followsBody = true;
         this.body.children.push(tool);
         this.uiNodes.push(tool);
       });

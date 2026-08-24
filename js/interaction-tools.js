@@ -11,6 +11,7 @@ Interaction.prototype.returnHand = function() {
   hand.x = home.x;
   hand.y = home.y;
   hand.workspaceInPanel = false;
+  hand.followsBody = true;
   this.canvas.style.cursor = "default";
   this.ui.setStatus("手已回到身体旁。");
 };
@@ -27,6 +28,7 @@ Interaction.prototype.handleToolNodeDown = function(event) {
     this.audio.play(node.type);
     node.x = event.clientX;
     node.y = event.clientY;
+    node.followsBody = false;
     this.canvas.style.cursor = "none";
     this.ui.setStatus("手已跟随光标：连续点击终端节点即可采集。");
   } else {
@@ -34,6 +36,7 @@ Interaction.prototype.handleToolNodeDown = function(event) {
     this.audio.play(node.type);
     node.x = event.clientX;
     node.y = event.clientY;
+    node.followsBody = false;
     this.canvas.style.cursor = "none";
     this.ui.setStatus("嘴已跟随光标：点击背包中的可食用物品即可进食。");
   }
@@ -117,7 +120,7 @@ Interaction.prototype.cancelTool = function(event) {
     event.preventDefault();
     const mouth = this.world.uiNodes.find(node => node.type === "嘴");
     if (mouth) Object.assign(mouth, this.world.toolHomePosition("嘴"));
-    if (mouth) mouth.workspaceInPanel = false;
+    if (mouth) { mouth.workspaceInPanel = false; mouth.followsBody = true; }
     this.mouthActive = false;
     this.canvas.style.cursor = "default";
     return true;

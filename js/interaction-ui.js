@@ -252,6 +252,17 @@ Interaction.prototype.handleUINodeDown = function(event) {
     this.skipClickAfterDrag = true;
     return true;
   }
+  // 身体使用“单击切换展开 / 拖动调整相对位置”的手势：按下阶段先进入可拖动状态，
+  // 未产生位移时才让随后的 click 事件调用 handleUIClick 完成展开或收起。
+  if (node === this.world.body) {
+    this.world.uiNodes.forEach(item => item.selected = false);
+    node.selected = true;
+    this.selectedUI = node;
+    this.down = { x: event.clientX, y: event.clientY };
+    this.lastScreen = { x: event.clientX, y: event.clientY };
+    this.dragging = false;
+    return true;
+  }
   if (["身体", "背包", "思考", "刷新", "天空", "太阳", "月亮"].includes(node.type)) {
     this.handleUIClick(node, event);
     this.skipClickAfterDrag = true;
@@ -431,9 +442,18 @@ Interaction.prototype.moveSelectedUIInteraction = function(event) {
 };
 
 Interaction.prototype.moveSelectedUI = function(dx, dy) {
-  const selected = this.world.uiNodes.filter(node => node.selected && !node.fixedUI);
+  // 身体本身仍是固定 UI（不会脱离玩家），但允许玩家调整它相对金色节点的偏移。
+  const selected = this.world.uiNodes.filter(node => node.selected && (!node.fixedUI || node.playerAttached));
   const roots = selected.filter(node => !selected.some(parent => parent.children.includes(node)));
-  roots.forEach(node => this.world.moveUI(node, dx, dy));
+  roots.forEach(node => {
+    if (node.playerAttached) {
+      const scale = Math.max(.01, this.camera.scale);
+      this.world.bodyAttachmentOffset.x += dx / scale;
+      this.world.bodyAttachmentOffset.y += dy / scale;
+      return;
+    }
+    this.world.moveUI(node, dx, dy);
+  });
 };
 
 Interaction.prototype.endSelectedUIInteraction = function() {

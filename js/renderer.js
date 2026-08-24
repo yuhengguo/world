@@ -16,6 +16,44 @@ class Renderer {
   }
 
   /**
+   * 将身体同步到当前金色边框节点的左下方。身体的附属关系不进入世界树；这里只把
+   * 世界坐标换算成屏幕坐标。仍停在身体旁的手和嘴同步保持相对展开位置，已黏附的工具不受影响。
+   */
+  syncPlayerBody(camera) {
+    const { world } = this;
+    const body = world.body;
+    const target = world.bodyAttachmentTarget();
+    const anchor = this.worldToScreen(target, camera);
+    const scale = camera.scale;
+    // 左下留出一个节点以上的空隙，既表现“子节点”关系，又不遮住玩家当前节点。
+    body.x = anchor.x + world.bodyAttachmentOffset.x * scale;
+    body.y = anchor.y + world.bodyAttachmentOffset.y * scale;
+    body.attachedToPlayer = target;
+    world.body.children.forEach((tool, index) => {
+      if (!tool.followsBody || tool.workspaceInPanel) return;
+      const direction = (index === 0 ? -1 : 1);
+      tool.x = body.x + direction * 65 * scale;
+      tool.y = body.y - 105 * scale;
+    });
+  }
+
+  /** 绘制“当前玩家节点 → 身体”的独立附属线；它不是移动路径，也不显示体力消耗。 */
+  drawPlayerBodyLink(camera) {
+    const { ctx, world } = this;
+    const target = world.bodyAttachmentTarget();
+    if (!target?.visible || !world.body.visible) return;
+    const start = this.worldToScreen(target, camera);
+    ctx.save();
+    ctx.strokeStyle = "rgba(185, 205, 220, .72)";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(world.body.x, world.body.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
    * 在世界边的中点旁标出固定移动成本。文字在相机缩放后保持稳定的屏幕大小，
    * 箭头仍留在连线正中，二者错开以同时表现“方向”和“消耗”。
    */
@@ -406,6 +444,8 @@ class Renderer {
     // 框选结束后保留的多选也视为框选特殊状态，直到玩家进行新的单节点操作。
     const allowMultipleBlue = !activeBlue && (Boolean(selectionBox) || selectedWorldCount + selectedUICount > 1);
     this.lastCamera = camera;
+    // 每帧在绘制前同步，确保金色位置因移动、替补接管或父节点回退改变时，身体立即跟随。
+    this.syncPlayerBody(camera);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     // 背景天文层必须在相机世界层之前落笔，不能与普通 UI 一起绘制到最前方。
     this.drawCelestialLayer(hovered, handActive, now, activeBlue, allowMultipleBlue);
@@ -455,6 +495,8 @@ class Renderer {
       .forEach(node => node.visible && this.drawNode(node, hovered, handActive, now, 1, activeBlue, allowMultipleBlue));
     ctx.restore();
 
+    // 身体是当前金色节点的角色附属物，这条线独立于普通世界父子线与金色移动路线。
+    this.drawPlayerBodyLink(camera);
     const hand = world.uiNodes.find(node => node.type === "手");
     if (hand?.visible && !hand.workspaceInPanel) {
       ctx.strokeStyle = "#777";
