@@ -38,6 +38,11 @@ class World {
     this.movementPathSteps = [];
     this.movementPathStart = null;
     this.movementPathEnd = null;
+    // 世界自动收起由一处统一结算：路径、采集和搜索只登记“必须保持可见”的节点，
+    // 下一帧再共同刷新，避免各个鼠标分支互相覆盖展开状态。
+    this.worldOpenStateDirty = true;
+    this.searchPreviewTarget = null;
+    this.activeHarvestTarget = null;
 
     // 山是不可被清空的世界根；森林、草地和岩壁等区域都会挂在它下面。
     this.root = new Node("山", width / 2, height / 2);
@@ -336,6 +341,7 @@ class World {
     }
     node.open = true;
     node.children.forEach(child => child.visible = true);
+    this.markWorldOpenStateDirty();
     return node.children;
   }
 
@@ -474,6 +480,7 @@ class World {
       node.open = true;
       this.showOpenDescendants(node);
       this.resolvePendingDynamicNodes(node);
+      this.markWorldOpenStateDirty();
       return [];
     }
     const available = rules[node.type] || [];
@@ -506,6 +513,7 @@ class World {
     // 首次展开时若已暂存迁徙鸟，也要与新生成的树枝、树干一同显示。
     node.children.forEach(child => child.visible = true);
     this.resolvePendingDynamicNodes(node);
+    this.markWorldOpenStateDirty();
     return created;
   }
 
@@ -528,6 +536,87 @@ class World {
     };
     hide(node);
     node.open = false;
+    this.markWorldOpenStateDirty();
+  }
+
+  /** 标记世界展开状态需要在绘制前重新结算。 */
+  markWorldOpenStateDirty() {
+    this.worldOpenStateDirty = true;
+  }
+
+  /** 搜索结果临时保留其祖先链；下一次点击世界后由交互层清除。 */
+  setSearchPreview(node) {
+    this.searchPreviewTarget = this.nodes.includes(node) ? node : null;
+    this.markWorldOpenStateDirty();
+  }
+
+  /** 结束搜索预览，恢复为以玩家位置、金色路径和采集目标为中心的展开状态。 */
+  clearSearchPreview() {
+    if (!this.searchPreviewTarget) return;
+    this.searchPreviewTarget = null;
+    this.markWorldOpenStateDirty();
+  }
+
+  /** 登记当前采集目标，使采集期间其父链不会被自动收起。 */
+  setActiveHarvestTarget(node) {
+    this.activeHarvestTarget = this.nodes.includes(node) ? node : null;
+    this.markWorldOpenStateDirty();
+  }
+
+  /**
+   * 根据金色位置、最近路径、采集目标和搜索预览统一收起世界。
+   * 路径只强制展开“边的父节点”；路径终点自身是否展开仍尊重玩家原来的操作，
+   * 因而不会因为成为金色节点就把它的全部子树也意外打开。
+   */
+  reconcileWorldOpenState() {
+    const forceOpen = new Set();
+    const keepVisible = new Set([this.root]);
+    const keepLineageVisible = node => {
+      let current = this.nodes.includes(node) ? node : null;
+      while (current) {
+        keepVisible.add(current);
+        const parent = this.parentOf(current);
+        if (parent) forceOpen.add(parent);
+        current = parent;
+      }
+    };
+
+    keepLineageVisible(this.playerLocation);
+    (this.movementPathSteps || []).forEach(step => {
+      if (!step.edge || !this.edges.includes(step.edge)) return;
+      keepLineageVisible(step.edge.from);
+      keepLineageVisible(step.edge.to);
+      forceOpen.add(step.edge.from);
+    });
+    keepLineageVisible(this.activeHarvestTarget);
+    keepLineageVisible(this.searchPreviewTarget);
+
+    // 先关闭与保留集合无关的旧分支；只改显示状态，不删除节点、坐标或生成结果。
+    this.nodes.forEach(node => {
+      if (!keepVisible.has(node)) node.open = false;
+      node.visible = node === this.root;
+    });
+    forceOpen.forEach(node => {
+      if (this.nodes.includes(node)) node.open = true;
+    });
+
+    // 从唯一根节点向下恢复可见性；只有展开节点的子节点才会继续出现，
+    // 与玩家手动 collapse/expand 的既有语义一致。
+    const reveal = parent => {
+      if (!parent.open) return;
+      parent.children.forEach(child => {
+        if (!this.nodes.includes(child) || child.hiddenUnderlay || child.locked) return;
+        child.visible = true;
+        reveal(child);
+      });
+    };
+    reveal(this.root);
+    this.worldOpenStateDirty = false;
+  }
+
+  /** 仅在状态发生变化时刷新，避免每一帧无意义地遍历整个世界。 */
+  flushWorldOpenState() {
+    if (this.worldOpenStateDirty) this.reconcileWorldOpenState();
   }
 
   /** 移动节点、它的普通后代及其尚未出现的隐藏层。 */
@@ -613,9 +702,12 @@ class World {
    * 采集路径可以累积，因此不能再通过一对起终点重算，否则较早的行走记录会被覆盖。
    */
   refreshMovementPath() {
+    const previousSteps = this.movementPathSteps || [];
     // 兼容旧版本已经写入的路径记录：任何“父节点 → 当前终端”的边都不允许留在移动高亮中。
-    this.movementPathSteps = (this.movementPathSteps || []).filter(step => this.edges.includes(step.edge) && !this.isHarvestable(step.edge.to));
+    this.movementPathSteps = previousSteps.filter(step => this.edges.includes(step.edge) && !this.isHarvestable(step.edge.to));
     this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+    // 渲染器每帧都会调用本方法；只有路径真的失效时才触发自动收起重算。
+    if (this.movementPathSteps.length !== previousSteps.length) this.markWorldOpenStateDirty();
   }
 
   /**
@@ -645,6 +737,7 @@ class World {
     if (this.movementPathEnd === removed) this.movementPathEnd = replacement;
     if (this.playerLocation === removed) this.playerLocation = replacement;
     this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+    this.markWorldOpenStateDirty();
   }
 
   /** 节点消失时，若它是路径端点，就把端点退回其删除前的父节点。 */
@@ -653,6 +746,7 @@ class World {
     if (this.movementPathEnd === node) this.movementPathEnd = parent || null;
     // 玩家所在节点被清理时，位置同步回退到删除前父节点；终端采集后自然停在父节点。
     if (this.playerLocation === node) this.playerLocation = parent || this.root;
+    this.markWorldOpenStateDirty();
   }
 
   /** 结算两个世界节点间的移动；终端资源的最后一段既不收费，也不属于路径高亮。 */
@@ -669,6 +763,7 @@ class World {
     // 每次有效移动都完整覆盖旧路径；采集完成后这条路径会留存到下一次移动。
     this.movementPathSteps = path.filter(step => !this.isHarvestable(step.edge.to));
     this.movementPathEdges = this.movementPathSteps.map(step => step.edge);
+    this.markWorldOpenStateDirty();
     // 路径不设时间上限：它代表玩家最近一次从哪里走到哪里，直到下一次移动才更新。
     return { path, displayPath: path, ...this.consumeHungerCost(cost) };
   }
@@ -1289,6 +1384,8 @@ class World {
     this.nodes = this.nodes.filter(item => item !== node);
     this.edges = this.edges.filter(edge => edge.from !== node && edge.to !== node);
     this.refreshMovementPath();
+    if (this.activeHarvestTarget === node) this.activeHarvestTarget = null;
+    if (this.searchPreviewTarget === node) this.searchPreviewTarget = null;
 
     parents.forEach(parent => {
       parent.children = parent.children.filter(child => child !== node);

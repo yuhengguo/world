@@ -7,6 +7,7 @@ Interaction.prototype.returnHand = function() {
   if (!hand) return;
   this.handActive = false;
   this.harvestTarget = null;
+  this.world.setActiveHarvestTarget(null);
   const home = this.world.toolHomePosition("手");
   hand.x = home.x;
   hand.y = home.y;
@@ -90,6 +91,7 @@ Interaction.prototype.handleHandClick = function(event) {
   // 同一目标的连续点击只推进采集进度；换目标时才结算从上一次采集父节点到新目标父节点的移动。
   if (this.harvestTarget !== target) this.beginHarvestMovement(target);
   this.harvestTarget = target;
+  this.world.setActiveHarvestTarget(target);
   this.audio.play(target.type);
   const resources = this.world.consumeHarvestResources(target);
   if (resources.gameOver) { this.ui.setStatus("生命归零，游戏结束。请点击“重新开始”。"); return true; }
@@ -110,6 +112,7 @@ Interaction.prototype.handleHandClick = function(event) {
     this.harvestMovementOrigin = landing;
     this.world.playerLocation = landing;
     this.harvestTarget = null;
+    this.world.setActiveHarvestTarget(null);
     this.ui.setStatus(`${movementText}已摘除 ${target.type}，已放入背包。`);
   }
   return true;

@@ -61,6 +61,8 @@ function frame(now) {
   dynamicNodes.tick(now);
   gameClock.tick(now);
   celestial.tick();
+  // 在渲染前统一执行世界自动收起，保证本帧路径、采集及搜索状态已经全部落定。
+  world.flushWorldOpenState();
   restartButton.hidden = !world.gameOver;
   // 黏附到鼠标的节点优先成为唯一蓝色焦点；没有黏附节点时由普通选中状态决定。
   const attachedNode = interaction.carriedTerminal || interaction.carriedUIItem || interaction.carriedBulkPile

@@ -31,6 +31,7 @@ Interaction.prototype.moveToStaticWorldNode = function(node) {
   if (!previous || previous === node) {
     this.worldMovementOrigin = node;
     this.world.playerLocation = node;
+    this.world.markWorldOpenStateDirty();
     return;
   }
   const result = this.world.moveBetweenNodes(previous, node, performance.now());
@@ -40,6 +41,7 @@ Interaction.prototype.moveToStaticWorldNode = function(node) {
   this.ui.setStatus(`移动路径：${route}｜${costText}${lifeText}（总消耗 ${result.cost.toFixed(3)}）`);
   this.worldMovementOrigin = node;
   this.world.playerLocation = node;
+  this.world.markWorldOpenStateDirty();
 };
 
 /** 仅当手开始采集新终端时，才从最近实际停留的父节点/静态节点结算移动。 */
@@ -56,6 +58,7 @@ Interaction.prototype.beginHarvestMovement = function(target) {
     this.harvestMovementOrigin = this.world.parentOf(target) || null;
     this.worldMovementOrigin = this.harvestMovementOrigin;
     this.world.playerLocation = this.harvestMovementOrigin || this.world.root;
+    this.world.markWorldOpenStateDirty();
     this.harvestMovementDebug = "采集移动：已在当前目标位置，本次不扣移动体力。";
     return;
   }
@@ -71,6 +74,7 @@ Interaction.prototype.beginHarvestMovement = function(target) {
   this.harvestMovementOrigin = this.world.parentOf(target) || null;
   this.worldMovementOrigin = this.harvestMovementOrigin;
   this.world.playerLocation = this.harvestMovementOrigin || this.world.root;
+  this.world.markWorldOpenStateDirty();
 };
 
 Interaction.prototype.moveSelectedNodes = function(dx, dy) {
@@ -123,6 +127,8 @@ Interaction.prototype.cancelCarriedTerminal = function(event) {
 };
 
 Interaction.prototype.handleWorldPointerDown = function(event) {
+  // 搜索预览只持续到玩家重新操作世界；随后自动收起规则恢复到金色路径中心。
+  this.world.clearSearchPreview();
   const point = this.worldPosition(event);
   const node = [...this.world.nodes].reverse().find(item => item.visible && !item.locked && this.hit(item, point));
   if (!node) {
@@ -175,6 +181,7 @@ Interaction.prototype.focusNamedNode = function(name) {
       parent = this.world.parentOf(parent);
     }
     node.visible = true;
+    this.world.setSearchPreview(node);
     // 搜索定位恢复节点在初始世界比例下的观看尺寸，再把它放到视野中央。
     this.camera.scale = 1;
     this.camera.x = this.canvas.width / 2 - node.x;

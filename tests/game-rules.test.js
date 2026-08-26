@@ -865,6 +865,70 @@ test("世界终端进入工作区后不能被放置，左键会回到原世界�
   assert.deepEqual({ x: terminal.x, y: terminal.y, workspaceInPanel: terminal.workspaceInPanel }, { ...origin, workspaceInPanel: false });
 });
 
+test("新金色路径会收起旧分支，并保留新路径的完整祖先链", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 500, 300));
+  const oldTree = attach(world, forest, new game.Node("树", 300, 250));
+  const newTree = attach(world, forest, new game.Node("树", 700, 250));
+  const oldBranch = attach(world, oldTree, new game.Node("树枝", 250, 150));
+  const newBranch = attach(world, newTree, new game.Node("树枝", 750, 150));
+  [world.root, forest, oldTree, oldBranch].forEach(node => { node.open = true; node.visible = true; });
+  newTree.visible = true;
+  // oldTree 代表上一轮遗留展开分支；本轮新路径从森林进入另一棵树。
+  world.playerLocation = forest;
+  world.moveBetweenNodes(forest, newBranch, 0);
+  world.playerLocation = newBranch;
+  world.flushWorldOpenState();
+  assert.equal(oldTree.open, false);
+  assert.equal(oldBranch.visible, false);
+  assert.equal(world.root.open, true);
+  assert.equal(forest.open, true);
+  assert.equal(newTree.open, true);
+  assert.equal(newBranch.visible, true);
+});
+
+test("金色路径终点不会被自动展开，只展开显示它所需的父节点", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 500, 300));
+  const tree = attach(world, forest, new game.Node("树", 650, 300));
+  attach(world, tree, new game.Node("树枝", 760, 260));
+  world.root.open = true;
+  forest.open = true;
+  tree.open = false;
+  world.playerLocation = tree;
+  world.markWorldOpenStateDirty();
+  world.flushWorldOpenState();
+  assert.equal(world.root.open, true);
+  assert.equal(forest.open, true);
+  assert.equal(tree.visible, true);
+  assert.equal(tree.open, false);
+  assert.equal(tree.children[0].visible, false);
+});
+
+test("搜索预览临时展开目标祖先链，结束后恢复金色位置的自动收起", () => {
+  const game = loadGame();
+  const world = new game.World(1000, 700);
+  const forest = attach(world, world.root, new game.Node("森林", 500, 300));
+  const currentTree = attach(world, forest, new game.Node("树", 350, 260));
+  const searchedTree = attach(world, forest, new game.Node("树", 700, 260));
+  const searchedBranch = attach(world, searchedTree, new game.Node("树枝", 790, 180));
+  world.root.open = true;
+  forest.open = true;
+  currentTree.visible = true;
+  world.playerLocation = currentTree;
+  world.setSearchPreview(searchedBranch);
+  world.flushWorldOpenState();
+  assert.equal(searchedTree.open, true);
+  assert.equal(searchedBranch.visible, true);
+  world.clearSearchPreview();
+  world.flushWorldOpenState();
+  assert.equal(searchedTree.open, false);
+  assert.equal(searchedBranch.visible, false);
+  assert.equal(currentTree.visible, true);
+});
+
 let failed = 0;
 tests.forEach(({ name, callback }) => {
   try {
